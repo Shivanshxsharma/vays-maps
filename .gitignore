@@ -1,0 +1,11 @@
+.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# 225 MB OSM extract, re-download from Geofabrik (see README)
+data-src/
+# Built APKs go to GitHub Releases, not the repo
+dist/

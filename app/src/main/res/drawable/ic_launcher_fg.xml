@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Vays mark: a V made of two roads splitting. Skipped road = outline, taken road = solid with an arrow.
+     Drawn inside the 66dp safe zone of the 108dp adaptive icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- skipped road: hollow -->
+    <path android:strokeColor="#8CFFFFFF" android:strokeWidth="7.3" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M54,72.5 C54,61.9 43.4,55.3 41.5,38.2" />
+    <path android:strokeColor="#143008" android:strokeWidth="4.5" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M54,72.5 C54,61.9 43.4,55.3 41.5,38.2" />
+    <!-- taken road: glow + solid -->
+    <path android:strokeColor="#66B0E454" android:strokeWidth="12.6" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M54,72.5 C54,61.9 64.6,55.3 66.5,40.8" />
+    <path android:strokeColor="#B0E454" android:strokeWidth="7.3" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M54,72.5 C54,61.9 64.6,55.3 66.5,40.8" />
+    <path android:fillColor="#FFFFFF" android:pathData="M67.5,32.9 L74.1,42.8 L61.3,41.5 Z" />
+</vector>
