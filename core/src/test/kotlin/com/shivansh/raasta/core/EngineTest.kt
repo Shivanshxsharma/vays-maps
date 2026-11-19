@@ -185,6 +185,17 @@ class EngineTest {
         assertTrue(ratio in 1.6..2.4, "expected ~2x the map's estimate, got $ratio")
     }
 
+    @Test fun searchUnderstandsWhatKindOfPlace() {
+        assertEquals("Shadipur", Geocoder.coreOf("Shadipur metro station"))
+        assertTrue(PlaceKind.METRO in Geocoder.intentOf("Shadipur metro station"))
+        assertEquals("connaught place", Geocoder.coreOf("restaurant in connaught place"))
+        assertTrue(PlaceKind.FOOD in Geocoder.intentOf("restaurant in connaught place"))
+        assertEquals("karol bagh", Geocoder.coreOf("petrol pump karol bagh"))
+        assertEquals("Khan Market", Geocoder.coreOf("Khan Market"))   // "market" is part of names, kept
+        assertEquals(PlaceKind.METRO, PlaceKind.of("railway", "station", "Shadipur", mapOf("station" to "subway")))
+        assertEquals(PlaceKind.FOOD, PlaceKind.of("amenity", "fast_food", "Haldiram's"))
+    }
+
     @Test fun tilesCoverTheRoute() {
         val line = listOf(LatLon(28.5672, 77.2100), LatLon(28.5918, 77.1615))
         val keys = RoadTiles.along(listOf(line), 250.0)

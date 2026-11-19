@@ -46,6 +46,22 @@ import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.WifiOff
 import com.composables.icons.lucide.X
+import com.composables.icons.lucide.BusFront
+import com.composables.icons.lucide.Building2
+import com.composables.icons.lucide.Coffee
+import com.composables.icons.lucide.Fuel
+import com.composables.icons.lucide.GraduationCap
+import com.composables.icons.lucide.Hospital
+import com.composables.icons.lucide.Hotel
+import com.composables.icons.lucide.Landmark
+import com.composables.icons.lucide.Plane
+import com.composables.icons.lucide.Route
+import com.composables.icons.lucide.ShoppingBag
+import com.composables.icons.lucide.TrainFront
+import com.composables.icons.lucide.TramFront
+import com.composables.icons.lucide.Trees
+import com.composables.icons.lucide.Utensils
+import com.shivansh.raasta.core.PlaceKind
 import com.shivansh.raasta.AppModel
 import com.shivansh.raasta.PackItem
 import com.shivansh.raasta.Screen
@@ -111,7 +127,7 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
             ) {
                 Icon(Lucide.Search, null, tint = C.secondary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Search a place in Delhi", style = T.body.copy(color = C.secondary))
+                Text("Places, metro stations, restaurants…", style = T.body.copy(color = C.secondary))
             }
         }
 
@@ -287,7 +303,8 @@ private fun NewRouteScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) 
                     if (vm.results.isNotEmpty()) {
                         item { Text("PLACES IN DELHI", style = T.label, modifier = Modifier.padding(top = 6.dp, bottom = 6.dp)) }
                         itemsIndexed(vm.results) { i, p ->
-                            PlaceRow(Lucide.MapPin, p.name, p.detail, Modifier.appear(i, delayStep = 35)) {
+                            val sub = listOf(p.kind.takeIf { it != PlaceKind.OTHER }?.label, p.detail.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
+                            PlaceRow(iconFor(p.kind), p.name, sub, Modifier.appear(i, delayStep = 35)) {
                                 if (editing == 0) { vm.fromPlace = p; editing = 1 } else vm.toPlace = p
                                 query = ""; vm.clearResults()
                             }
@@ -302,6 +319,27 @@ private fun NewRouteScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) 
             }
         }
     }
+}
+
+/** A Lucide icon for each kind of place in search results. */
+private fun iconFor(k: PlaceKind) = when (k) {
+    PlaceKind.METRO, PlaceKind.METRO_GATE -> Lucide.TramFront
+    PlaceKind.RAIL -> Lucide.TrainFront
+    PlaceKind.BUS -> Lucide.BusFront
+    PlaceKind.AIRPORT -> Lucide.Plane
+    PlaceKind.FOOD -> Lucide.Utensils
+    PlaceKind.CAFE -> Lucide.Coffee
+    PlaceKind.FUEL -> Lucide.Fuel
+    PlaceKind.HOSPITAL -> Lucide.Hospital
+    PlaceKind.SHOP, PlaceKind.MALL -> Lucide.ShoppingBag
+    PlaceKind.HOTEL -> Lucide.Hotel
+    PlaceKind.EDUCATION -> Lucide.GraduationCap
+    PlaceKind.WORSHIP -> Lucide.Landmark
+    PlaceKind.PARK -> Lucide.Trees
+    PlaceKind.LANDMARK -> Lucide.Landmark
+    PlaceKind.AREA -> Lucide.Building2
+    PlaceKind.ROAD -> Lucide.Route
+    PlaceKind.OTHER -> Lucide.MapPin
 }
 
 @Composable
@@ -330,7 +368,7 @@ private fun PlaceField(
         Spacer(Modifier.width(16.dp))
         if (active) {
             Box(Modifier.weight(1f)) {
-                if (query.isEmpty()) Text(label ?: "Search for a ${placeholder.lowercase()}", style = T.body.copy(color = C.tertiary), maxLines = 1)
+                if (query.isEmpty()) Text(label ?: "${placeholder}: place, metro, restaurant…", style = T.body.copy(color = C.tertiary), maxLines = 1)
                 BasicTextField(
                     value = query, onValueChange = onQuery, singleLine = true,
                     textStyle = T.body, cursorBrush = SolidColor(C.blue),

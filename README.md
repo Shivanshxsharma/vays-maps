@@ -61,7 +61,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 <table>
   <tr>
     <td align="center" width="33%"><img src="docs/screens/home.png" alt="Home" width="260"><br><sub><b>Home</b><br>Your last ride on a real mini map, one tap to ride</sub></td>
-    <td align="center" width="33%"><img src="docs/screens/search.png" alt="New ride" width="260"><br><sub><b>New ride</b><br>Search any place in Delhi</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/search.png" alt="New ride" width="260"><br><sub><b>New ride</b><br>Places, metro stations, restaurants, petrol pumps</sub></td>
     <td align="center" width="33%"><img src="docs/screens/download.png" alt="Download" width="260"><br><sub><b>Download</b><br>Only the roads along your route, ~100 KB</sub></td>
   </tr>
   <tr>
@@ -124,6 +124,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 * **Guidance** (`core/Guidance.kt`, `core/Phrases.kt`): at every split, count the look-alike roads a rider will see (2–4, left to right, driveways ignored) and pick yours by position. Check each branch for a real flyover (a bridge longer than 100 m, or one named "Flyover") or an underpass within 230 m; short bridges over nallahs and railway lines are ignored. Big circles like Connaught Place get "join the circle"; two quick turns across a median become a U-turn.
 * **Navigator** (`core/Navigator.kt`): snaps GPS to the route, speaks at speed-scaled distances, watches the roads you weren't meant to take for 450 m after each split (that's how "stayed below the flyover" is caught), and re-routes offline with an edge-based A* that knows India drives on the left.
 * **Route matching**: OSRM's JSON rounds long OSM node ids and sometimes uses private lanes the tiles leave out, so routes are aligned to the map by coordinate, with detours and a corridor fallback.
+* **Search** (`core/Online.kt`): merges two free OpenStreetMap search services (Nominatim and Photon). Words like "metro station" or "restaurant" are read as the kind of place you want, not as part of its name, so results of that kind rank first and each one is labelled.
 * **Tiles** (`tools/`): a small dependency-free PBF reader cuts Delhi out of the Geofabrik northern-India extract into ~1.1 km gzip'd JSON tiles.
 * **App** (`app/`): Jetpack Compose, a custom Canvas map with grid culling and a gentle 3D tilt, Lucide icons, Inter type, iOS-style transitions.
 
@@ -148,7 +149,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 Needs JDK 17 and the Android SDK.
 
 ```powershell
-.\gradlew :core:test                 # 12 engine tests on real Delhi data
+.\gradlew :core:test                 # 13 engine tests on real Delhi data
 .\gradlew :app:assembleRelease       # app/build/outputs/apk/release/app-release.apk
 .\gradlew :tools:installDist         # tools/build/install/tools/bin/tools
 ```
@@ -180,7 +181,8 @@ Set `RAASTA_TILES` to a folder or URL to build from other tiles (default: `data/
 - [x] Ride download end to end in the app: search → OSRM → tiles from this repo
 - [x] Position-based voice, flyover / underpass cues, offline re-routing
 - [x] Speedometer, speed limits, pace-based arrival time
-- [x] 12 engine tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
+- [x] Search that understands "Shadipur metro station", "restaurant in Connaught Place", "petrol pump Karol Bagh"
+- [x] 13 engine tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
 - [ ] Road-tested on a real phone
 - [ ] Background navigation (today the screen stays on)
 - [ ] Hindi phrasebook

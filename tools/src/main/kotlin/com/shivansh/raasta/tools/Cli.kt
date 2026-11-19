@@ -27,6 +27,7 @@ fun main(args: Array<String>) {
         "render" -> render(PackIO.read(File(args[1])), File(args[2]), args.getOrNull(3)?.toInt() ?: 0)
         "sim" -> sim(PackIO.read(File(args[1])), args.getOrNull(2)?.toInt() ?: 0)
         "diag" -> diag(ll(args[1]), ll(args[2]))
+        "search" -> Geocoder(Http()).search(args.drop(1).joinToString(" ")).forEach { println("%-16s %s  (%s)".format(it.kind.label, it.name, it.detail)) }
         "tiles" -> TileCutter.run(File(args[1]), File(args[2]))
         else -> println("usage: build|show|render|sim … (see Cli.kt)")
     }

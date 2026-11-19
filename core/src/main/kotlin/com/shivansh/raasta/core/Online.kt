@@ -51,15 +51,118 @@ class Http(private val userAgent: String = "VaysMaps/0.1 (offline Delhi navigati
     }
 }
 
-data class Place(val name: String, val detail: String, val lat: Double, val lon: Double) {
+/** What kind of place a search result is, for the label and icon. */
+enum class PlaceKind(val label: String) {
+    METRO("Metro station"), METRO_GATE("Metro gate"), RAIL("Station"), BUS("Bus stop"), AIRPORT("Airport"),
+    FOOD("Restaurant"), CAFE("Café"), FUEL("Petrol pump"), HOSPITAL("Hospital"), SHOP("Shop"), MALL("Mall"),
+    HOTEL("Hotel"), EDUCATION("School / college"), WORSHIP("Place of worship"), PARK("Park"),
+    LANDMARK("Landmark"), AREA("Area"), ROAD("Road"), OTHER("Place");
+
+    companion object {
+        /** From OSM key/value (Nominatim category/type, Photon osm_key/osm_value) plus hints in the name/tags. */
+        fun of(key: String?, value: String?, name: String, extra: Map<String, Any?> = emptyMap()): PlaceKind {
+            val n = name.lowercase()
+            val metroHint = n.contains("metro") || extra.s("station") == "subway" || extra.s("subway") == "yes" ||
+                extra.s("network")?.contains("metro", true) == true
+            return when (key) {
+                "railway" -> when (value) {
+                    "subway_entrance" -> METRO_GATE
+                    "station", "halt", "stop", "subway" -> if (metroHint || value == "subway") METRO else RAIL
+                    else -> OTHER
+                }
+                "public_transport" -> if (metroHint) METRO else if (value == "station") RAIL else BUS
+                "building" -> if (metroHint && (value == "transportation" || value == "train_station" || value == "yes")) METRO else OTHER
+                "amenity" -> when (value) {
+                    "restaurant", "fast_food", "food_court", "bar", "pub" -> FOOD
+                    "cafe", "ice_cream" -> CAFE
+                    "fuel", "charging_station" -> FUEL
+                    "hospital", "clinic", "doctors" -> HOSPITAL
+                    "school", "college", "university" -> EDUCATION
+                    "place_of_worship" -> WORSHIP
+                    "bus_station" -> BUS
+                    else -> OTHER
+                }
+                "shop" -> if (value == "mall" || value == "department_store") MALL else SHOP
+                "tourism" -> when (value) {
+                    "hotel", "guest_house", "hostel", "motel" -> HOTEL
+                    "attraction", "museum", "viewpoint", "monument", "artwork" -> LANDMARK
+                    else -> OTHER
+                }
+                "historic" -> LANDMARK
+                "leisure" -> if (value == "park" || value == "garden" || value == "nature_reserve") PARK else OTHER
+                "aeroway" -> AIRPORT
+                "highway" -> if (value == "bus_stop") BUS else ROAD
+                "place", "boundary" -> AREA
+                else -> OTHER
+            }
+        }
+    }
+}
+
+data class Place(val name: String, val detail: String, val lat: Double, val lon: Double, val kind: PlaceKind = PlaceKind.OTHER) {
     val latLon get() = LatLon(lat, lon)
 }
 
-/** Place search limited to Delhi (Nominatim). Search on submit only, never per keystroke. */
-class Geocoder(private val http: Http, private val base: String = "https://nominatim.openstreetmap.org") {
+/**
+ * Place search limited to Delhi, using two free OpenStreetMap search services and merging them:
+ * Nominatim (precise names) and Photon (forgiving, good at "restaurant in Connaught Place").
+ * Words like "metro station" are understood as *what kind of place* you want, not as part of the name,
+ * so "Shadipur metro station" finds the station OpenStreetMap simply calls "Shadipur".
+ * Search on submit only, never per keystroke.
+ */
+class Geocoder(
+    private val http: Http,
+    private val nominatim: String = "https://nominatim.openstreetmap.org",
+    private val photon: String = "https://photon.komoot.io",
+) {
+    private class Hit(val place: Place, var score: Double)
+
     fun search(query: String): List<Place> {
-        val url = "$base/search?format=jsonv2&limit=8&countrycodes=in&bounded=1" +
-            "&viewbox=${Delhi.VIEWBOX}&q=${Http.enc(query)}"
+        val q = query.trim()
+        val intent = intentOf(q)
+        val core = coreOf(q)
+        val tokens = core.lowercase().split(' ').filter { it.length >= 2 }
+        val hits = ArrayList<Hit>()
+        var lastError: Exception? = null
+        fun collect(source: () -> List<Place>, bonus: Double) {
+            try { source().forEach { hits.add(Hit(it, bonus)) } } catch (e: Exception) { lastError = e }
+        }
+        collect({ photon(q) }, 0.0)
+        collect({ nominatim(q) }, 0.5)
+        if (core.isNotBlank() && !core.equals(q, ignoreCase = true)) {
+            Thread.sleep(1100) // Nominatim's fair-use limit is one request a second
+            collect({ nominatim(core) }, 0.3)
+        }
+        if (hits.isEmpty() && lastError != null) throw lastError!!
+
+        fun matches(h: Hit) = tokens.isEmpty() || tokens.any { t -> h.place.name.contains(t, true) || h.place.detail.contains(t, true) }
+        // Once something matches your words, drop the rest (e.g. other metro stations when you asked for Shadipur).
+        if (hits.any { matches(it) }) hits.retainAll { matches(it) }
+        for (h in hits) {
+            val n = h.place.name.lowercase()
+            if (h.place.kind in intent) h.score += 5
+            if (tokens.isNotEmpty() && tokens.all { n.contains(it) }) h.score += 3
+            else if (tokens.any { n.contains(it) }) h.score += 1
+            if (intent.isNotEmpty() && (h.place.kind == PlaceKind.AREA || h.place.kind == PlaceKind.ROAD)) h.score -= 1
+            if (h.place.kind == PlaceKind.METRO_GATE) h.score -= 0.5
+        }
+        // Same place from both services (or several gates of one station): keep the best-scored one.
+        val kept = ArrayList<Hit>()
+        for (h in hits.sortedByDescending { it.score }) {
+            val dup = kept.any { k ->
+                val d = Geo.dist(k.place.latLon, h.place.latLon)
+                val sameName = k.place.name.equals(h.place.name, true)
+                d < 30 || (sameName && h.place.kind == PlaceKind.ROAD && d < 2000) || (d < 300 && (sameName ||
+                    (h.place.kind == PlaceKind.METRO_GATE && k.place.kind in setOf(PlaceKind.METRO, PlaceKind.METRO_GATE))))
+            }
+            if (!dup) kept.add(h)
+        }
+        return kept.take(10).map { it.place }
+    }
+
+    private fun nominatim(q: String): List<Place> {
+        val url = "$nominatim/search?format=jsonv2&limit=8&countrycodes=in&bounded=1&extratags=1" +
+            "&viewbox=${Delhi.VIEWBOX}&q=${Http.enc(q)}"
         return Json.parse(http.get(url)).asList().mapNotNull { r ->
             val m = r.asMap()
             val lat = m.d("lat"); val lon = m.d("lon")
@@ -68,8 +171,54 @@ class Geocoder(private val http: Http, private val base: String = "https://nomin
             val name = m.s("name")?.takeIf { it.isNotBlank() } ?: display.substringBefore(',')
             val detail = display.split(',').map { it.trim() }.filter { it.isNotEmpty() && it != name }
                 .take(3).joinToString(", ")
-            Place(name, detail, lat, lon)
-        }.distinctBy { it.name.lowercase() + "|" + it.detail.lowercase() }
+            Place(name, detail, lat, lon, PlaceKind.of(m.s("category"), m.s("type"), name, m["extratags"].asMap()))
+        }
+    }
+
+    private fun photon(q: String): List<Place> {
+        val url = "$photon/api/?limit=10&lang=en&bbox=${Delhi.MIN_LON},${Delhi.MIN_LAT},${Delhi.MAX_LON},${Delhi.MAX_LAT}&q=${Http.enc(q)}"
+        return Json.parse(http.get(url)).asMap()["features"].asList().mapNotNull { f ->
+            val fm = f.asMap()
+            val c = fm["geometry"].asMap()["coordinates"].asList()
+            val lon = (c.getOrNull(0) as? Double) ?: return@mapNotNull null
+            val lat = (c.getOrNull(1) as? Double) ?: return@mapNotNull null
+            if (!Delhi.contains(lat, lon)) return@mapNotNull null
+            val p = fm["properties"].asMap()
+            val name = p.s("name") ?: p.s("street") ?: return@mapNotNull null
+            val detail = listOfNotNull(p.s("street")?.takeIf { it != name }, p.s("locality"), p.s("district"), p.s("city"))
+                .distinct().take(3).joinToString(", ")
+            Place(name, detail, lat, lon, PlaceKind.of(p.s("osm_key"), p.s("osm_value"), name))
+        }
+    }
+
+    companion object {
+        private val INTENTS: List<Pair<Regex, Set<PlaceKind>>> = listOf(
+            Regex("\\bmetro\\b") to setOf(PlaceKind.METRO, PlaceKind.METRO_GATE),
+            Regex("\\b(station|stn)\\b") to setOf(PlaceKind.METRO, PlaceKind.RAIL),
+            Regex("\\b(restaurant|restaurants|food|dhaba|eat|biryani|pizza)\\b") to setOf(PlaceKind.FOOD),
+            Regex("\\b(cafe|café|coffee)\\b") to setOf(PlaceKind.CAFE),
+            Regex("\\b(petrol|pump|fuel|cng)\\b") to setOf(PlaceKind.FUEL),
+            Regex("\\b(hospital|clinic)\\b") to setOf(PlaceKind.HOSPITAL),
+            Regex("\\bmall\\b") to setOf(PlaceKind.MALL),
+            Regex("\\bhotel\\b") to setOf(PlaceKind.HOTEL),
+            Regex("\\bairport\\b") to setOf(PlaceKind.AIRPORT),
+            Regex("\\b(college|university|school)\\b") to setOf(PlaceKind.EDUCATION),
+            Regex("\\b(park|garden)\\b") to setOf(PlaceKind.PARK),
+        )
+
+        /** Words that describe the kind of place rather than its name; dropped for the name search. */
+        private val TYPE_WORDS = Regex(
+            "\\b(metro station|railway station|metro|station|stn|restaurants?|food|dhaba|cafe|café|coffee|" +
+                "petrol pump|petrol|pump|fuel|cng|hospital|clinic|mall|hotel|near|nearby|in|at|the)\\b",
+            RegexOption.IGNORE_CASE,
+        )
+
+        fun intentOf(q: String): Set<PlaceKind> {
+            val s = q.lowercase()
+            return INTENTS.filter { it.first.containsMatchIn(s) }.flatMap { it.second }.toSet()
+        }
+
+        fun coreOf(q: String): String = q.replace(TYPE_WORDS, " ").replace(Regex("\\s+"), " ").trim()
     }
 }
 
