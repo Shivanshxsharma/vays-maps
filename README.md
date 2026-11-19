@@ -112,24 +112,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 
 ## How it works
 
-```mermaid
-flowchart TB
-  subgraph online["Online · once per ride"]
-    direction LR
-    A["Search<br/><sub>OpenStreetMap</sub>"] --> B["Route options<br/><sub>OSRM</sub>"] --> C["Road tiles<br/><sub>this repo</sub>"] --> D["Ride pack<br/><sub>~100 KB</sub>"]
-  end
-  subgraph offline["Offline · while riding"]
-    direction LR
-    E["GPS"] --> F["Navigator<br/><sub>snap · watch splits · re-route</sub>"] --> G["Voice + 3D map"]
-  end
-  D --> F
-  classDef on fill:#16210F,stroke:#B0E454,color:#EAFFD0
-  classDef off fill:#1B1B1B,stroke:#6B7263,color:#EAFFD0
-  class A,B,C,D on
-  class E,F,G off
-  style online fill:#0D0D0D,stroke:#2F3A26,color:#B0E454
-  style offline fill:#0D0D0D,stroke:#33352F,color:#EAFFD0
-```
+<p align="center"><img src="docs/art/how-it-works.png" alt="Online once per ride: search, route options, road tiles from this repo, ride pack. Offline while riding: GPS, navigator, voice, 3D map." width="100%"></p>
 
 <details>
 <summary><b>Under the hood</b></summary>
