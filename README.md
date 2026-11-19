@@ -6,6 +6,8 @@ Offline navigation for Delhi, built for **riders**. The voice tells you *which r
 > "Three roads ahead. Take the middle one."
 > "At the signal, turn left." · "At the roundabout, take the second exit."
 
+**[Download the Android app (VaysMaps.apk)](https://github.com/Shivanshxsharma/vays-maps/releases/latest/download/VaysMaps.apk)**: Android 8+, sideloaded, Delhi only.
+
 You download a ride while you're online. Vays Maps saves only the roads in a ~250 m strip around it (usually 60–200 KB, never all of Delhi), then guides you by GPS with no internet.
 
 **Design:** minimal jet-black UI (#0D0D0D) with soft-ivory text (#EAFFD0). Lime green (#B0E454) is the one accent — the main button, the route and the road to take — with forest green (#224F10) for the logo tile and selected states. Lime also marks good states; red marks bad ones (end, delete, off route). Maneuver icons are keyline drawings that show every road at the split, with yours filled in.
