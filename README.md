@@ -72,7 +72,8 @@ tools\build\install\tools\bin\tools sim testdata\aiims-dhaulakuan.rpk
 
 ## Status (v0.5.0)
 
-* Engine verified on four real Delhi routes; 12 unit tests, including "stayed below instead of taking the Raj Nagar Flyover → re-routed offline → still arrived".
+* Ride download verified end to end in the app (Nominatim search → OSRM → road tiles from this repo), e.g. India Gate → Qutb Minar.
+* Engine verified on five real Delhi routes; 12 unit tests, including "stayed below instead of taking the Raj Nagar Flyover → re-routed offline → still arrived".
 * App runs on the Android emulator (Pixel 8, Android 16): home, ride preview and a full demo ride verified with screenshots. **Not yet run on a real phone or ridden.**
 * Road tiles are served from this repo's `data/` folder (raw.githubusercontent.com, jsDelivr as backup; see `Config.TILE_BASES` in `app/.../Platform.kt`). Overpass is only a fallback.
 

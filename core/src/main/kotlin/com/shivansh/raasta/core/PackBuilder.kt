@@ -43,8 +43,13 @@ class PackBuilder(http: Http, private val tiles: RoadTiles?, private val useOver
         val planned = ArrayList<PlannedRoute>()
         var mainGuidance: List<Maneuver> = emptyList()
         for ((k, r) in routes.withIndex()) {
-            val path = mapRoute(graph, r) ?: continue
-            if (path.length < 0.6 * r.distance) continue // could not line it up with the map data; skip it
+            var path = mapRoute(graph, r)
+            if (path == null || path.length < 0.6 * r.distance) {
+                // Couldn't follow the server's line (it may use roads we leave out, like private lanes):
+                // plan this one ourselves inside the downloaded corridor.
+                path = routeInCorridor(graph, r) ?: continue
+                if (path.length < 0.6 * r.distance) continue
+            }
             val ms = Guidance.build(path, to.name)
             if (planned.isEmpty()) mainGuidance = ms
             planned.add(PlannedRoute(path.nodes, r.distance, r.duration, label(path, k)))
@@ -146,11 +151,19 @@ class PackBuilder(http: Http, private val tiles: RoadTiles?, private val useOver
         }
         val coverage = if (r.coords.isEmpty()) 0.0 else seq.size.toDouble() / r.coords.size
         if (coverage >= 0.5) Path.fromNodes(graph, seq.toIntArray())?.let { return it }
-        // Fallback: route it ourselves inside the corridor.
-        val start = graph.nearestNode(r.coords.first().lat, r.coords.first().lon)
-        val end = graph.nearestNode(r.coords.last().lat, r.coords.last().lon)
-        val e = graph.routeNodes(start, end) ?: return null
-        return if (e.isEmpty()) null else Path(graph, e)
+        return routeInCorridor(graph, r)
+    }
+
+    /** Our own A* between the route's ends, inside the downloaded corridor. */
+    private fun routeInCorridor(graph: RoadGraph, r: OsrmRoute): Path? {
+        // The very nearest node can sit on a cut-off stub (a closed avenue, a gated lane), so try a few at each end.
+        val starts = graph.nearestNodes(r.coords.first().lat, r.coords.first().lon, 6)
+        val ends = graph.nearestNodes(r.coords.last().lat, r.coords.last().lon, 6)
+        for (a in starts) for (b in ends) {
+            val e = graph.routeNodes(a, b) ?: continue
+            if (e.isNotEmpty()) return Path(graph, e)
+        }
+        return null
     }
 
     companion object {

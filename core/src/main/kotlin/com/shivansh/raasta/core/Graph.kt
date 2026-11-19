@@ -144,6 +144,12 @@ class RoadGraph(val pack: RoutePack) {
         return best
     }
 
+    /** The [k] nearest nodes that have roads leaving them, closest first. */
+    fun nearestNodes(plat: Double, plon: Double, k: Int): List<Int> =
+        lat.indices.asSequence().filter { out[it].isNotEmpty() }
+            .map { it to Geo.dist(plat, plon, lat[it], lon[it]) }
+            .sortedBy { it.second }.take(k).map { it.first }.toList()
+
     companion object { const val MAX_SPEED = 75 / 3.6 }
 }
 
@@ -207,16 +213,23 @@ class Path(val graph: RoadGraph, val edges: IntArray) {
             if (nodePath.isEmpty()) return null
             val out = ArrayList<Int>()
             var cur = nodePath[0]
+            var fails = 0
             for (i in 1 until nodePath.size) {
                 val b = nodePath[i]
                 if (b == cur) continue
                 val e = graph.edgeBetween(cur, b)
-                if (e >= 0) { out.add(e); cur = b; continue }
+                if (e >= 0) { out.add(e); cur = b; fails = 0; continue }
                 // Not directly connected (data mismatch): bridge the gap, or skip this node and try the next.
                 // Only short, sensible hops: a long one means this node is bad data, not a gap.
                 val straight = Geo.dist(graph.lat[cur], graph.lon[cur], graph.lat[b], graph.lon[b])
-                val hop = graph.routeNodes(cur, b, maxTime = 20.0 + straight / 4.0)
+                var hop = graph.routeNodes(cur, b, maxTime = 20.0 + straight / 4.0)
+                if (hop == null && fails >= 4 && fails % 3 == 1) {
+                    // Stuck for a while (the source route used a road we don't keep, e.g. a private lane):
+                    // allow a real detour around it and rejoin the route further on.
+                    hop = graph.routeNodes(cur, b, maxTime = 120.0 + straight / 3.0)
+                }
                 if (hop == null) {
+                    fails++
                     // Stuck right at the start (e.g. the route begins on a driveway stub we don't have):
                     // drop the little bit built so far and start from here instead.
                     if (out.sumOf { graph.edges[it].length } < 150.0) { out.clear(); cur = b }
@@ -224,6 +237,7 @@ class Path(val graph: RoadGraph, val edges: IntArray) {
                 }
                 hop.forEach { out.add(it) }
                 cur = b
+                fails = 0
             }
             return if (out.isEmpty()) null else Path(graph, out.toIntArray())
         }
