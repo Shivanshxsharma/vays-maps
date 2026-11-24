@@ -13,8 +13,10 @@ android {
         applicationId = "com.shivansh.vaysmaps"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "0.5.1"
+        versionCode = 8
+        versionName = "0.6.0"
+        // For testing tiles before they're published: -PtileBase=file:/sdcard/Android/data/com.shivansh.vaysmaps/files/data
+        buildConfigField("String", "TILE_BASE", "\"${providers.gradleProperty("tileBase").getOrElse("")}\"")
     }
 
     buildTypes {
@@ -27,7 +29,7 @@ android {
         }
     }
 
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

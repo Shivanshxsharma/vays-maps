@@ -1,7 +1,9 @@
 package com.shivansh.raasta
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -12,7 +14,14 @@ import android.os.Bundle
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.shivansh.raasta.core.Fix
+import com.shivansh.raasta.core.Geo
+import com.shivansh.raasta.core.Place
+import com.shivansh.raasta.core.PlaceKind
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 object Config {
@@ -20,7 +29,8 @@ object Config {
      * Delhi road tiles (built by `tools tiles`, see README) hosted on GitHub. Tried in order.
      * Repo layout: data/index.json + data/tiles/<row>_<col>.json.gz
      */
-    val TILE_BASES = listOf(
+    val TILE_BASES = listOfNotNull(
+        BuildConfig.TILE_BASE.ifEmpty { null },
         "https://raw.githubusercontent.com/Shivanshxsharma/vays-maps/main/data",
         "https://cdn.jsdelivr.net/gh/Shivanshxsharma/vays-maps@main/data",
     )
@@ -87,28 +97,69 @@ class Speaker(context: Context) {
     fun shutdown() { tts.stop(); tts.shutdown() }
 }
 
-/** Raw GPS (no Google Play services needed). */
+/** Location straight from Android (no Google Play services needed). */
 class Gps(context: Context) {
-    private val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-    private var listener: LocationListener? = null
+    private val app = context.applicationContext
+    private val lm = app.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    private val listeners = ArrayList<LocationListener>()
+
+    val permitted get() = fine || granted(Manifest.permission.ACCESS_COARSE_LOCATION)
+    val fine get() = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+    /** Location switched on in the phone's settings. */
+    val switchedOn get() = LocationManagerCompat.isLocationEnabled(lm)
+
+    private fun granted(p: String) = ContextCompat.checkSelfPermission(app, p) == PackageManager.PERMISSION_GRANTED
+
+    /** For riding: precise GPS only, every second. */
+    fun start(onFix: (Fix) -> Unit) { stop(); listen(LocationManager.GPS_PROVIDER, 1000L, onFix) }
+
+    /**
+     * For "where am I": every source the phone has. Network gives a rough spot at once, even indoors; GPS sharpens
+     * it. A worse reading never replaces a better one that is still fresh.
+     */
+    fun startLive(onFix: (Fix) -> Unit) {
+        stop()
+        if (!permitted) return
+        var best: Fix? = null
+        var bestAt = 0L
+        val offer = { f: Fix ->
+            val now = System.currentTimeMillis()
+            val b = best
+            if (b == null || f.accuracy <= b.accuracy * 1.4 || now - bestAt > 9_000) { best = f; bestAt = now; onFix(f) }
+        }
+        lastKnown(maxAgeMs = 2 * 60_000L)?.let { best = it; bestAt = it.time; onFix(it) }
+        val have = lm.allProviders
+        for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, "fused")) if (p in have) listen(p, 1500L, offer)
+    }
 
     @SuppressLint("MissingPermission")
-    fun start(onFix: (Fix) -> Unit) {
-        stop()
-        val l = LocationListener { loc -> onFix(loc.toFix()) }
-        listener = l
-        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, Looper.getMainLooper())
+    private fun listen(provider: String, ms: Long, onFix: (Fix) -> Unit) {
+        // Not a lambda: Android 8–10 call the other methods, which a lambda doesn't have (AbstractMethodError).
+        val l = object : LocationListener {
+            override fun onLocationChanged(location: Location) = onFix(location.toFix())
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        try {
+            lm.requestLocationUpdates(provider, ms, 0f, l, Looper.getMainLooper())
+            listeners.add(l)
+        } catch (_: SecurityException) {
+        } catch (_: IllegalArgumentException) {
+        }
     }
 
     fun stop() {
-        listener?.let { lm.removeUpdates(it) }
-        listener = null
+        listeners.forEach { lm.removeUpdates(it) }
+        listeners.clear()
     }
 
     @SuppressLint("MissingPermission")
-    fun lastKnown(): Fix? = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.FUSED_PROVIDER)
+    fun lastKnown(maxAgeMs: Long): Fix? = lm.allProviders
         .mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
-        .maxByOrNull { it.time }?.toFix()
+        .filter { System.currentTimeMillis() - it.time < maxAgeMs }
+        .minByOrNull { if (it.hasAccuracy()) it.accuracy else 1000f }?.toFix()
 
     private fun Location.toFix() = Fix(
         lat = latitude, lon = longitude,
@@ -117,4 +168,26 @@ class Gps(context: Context) {
         bearing = if (hasBearing()) bearing.toDouble() else -1.0,
         time = time,
     )
+}
+
+/** Home, Work and recent places, kept on the phone only. */
+class SavedPlaces(context: Context) {
+    private val sp = context.getSharedPreferences("places", Context.MODE_PRIVATE)
+
+    fun get(key: String): Place? = sp.getString(key, null)?.let { runCatching { read(JSONObject(it)) }.getOrNull() }
+    fun set(key: String, p: Place?) = sp.edit().apply { if (p == null) remove(key) else putString(key, write(p).toString()) }.apply()
+
+    fun recents(): List<Place> = runCatching {
+        val a = JSONArray(sp.getString("recents", "[]"))
+        List(a.length()) { read(a.getJSONObject(it)) }
+    }.getOrDefault(emptyList())
+
+    fun addRecent(p: Place) {
+        val list = (listOf(p) + recents().filter { it.name != p.name || Geo.dist(it.latLon, p.latLon) > 100 }).take(12)
+        sp.edit().putString("recents", JSONArray(list.map { write(it) }).toString()).apply()
+    }
+
+    private fun write(p: Place) = JSONObject().put("n", p.name).put("d", p.detail).put("a", p.lat).put("o", p.lon).put("k", p.kind.name)
+    private fun read(o: JSONObject) = Place(o.getString("n"), o.optString("d"), o.getDouble("a"), o.getDouble("o"),
+        PlaceKind.entries.firstOrNull { it.name == o.optString("k") } ?: PlaceKind.OTHER)
 }

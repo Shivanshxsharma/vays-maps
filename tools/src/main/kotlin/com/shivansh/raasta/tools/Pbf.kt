@@ -13,9 +13,12 @@ class PbfReader(private val file: File) {
     interface Sink {
         fun node(id: Long, lat: Double, lon: Double, tags: Map<String, String>)
         fun way(id: Long, refs: LongArray, tags: Map<String, String>)
+        /** [types]: 0 node, 1 way, 2 relation. */
+        fun relation(id: Long, tags: Map<String, String>, members: LongArray, types: IntArray, roles: List<String>) {}
     }
 
-    fun read(sink: Sink, wantWays: Boolean = true) {
+    /** One pass over the file. Skipping what you don't need makes the relations-only pass much faster. */
+    fun read(sink: Sink, wantWays: Boolean = true, wantNodes: Boolean = true, wantRelations: Boolean = false) {
         DataInputStream(file.inputStream().buffered(1 shl 20)).use { inp ->
             while (true) {
                 val headerLen = try { inp.readInt() } catch (_: EOFException) { break }
@@ -31,7 +34,7 @@ class PbfReader(private val file: File) {
                 }
                 val blob = ByteArray(dataSize).also { inp.readFully(it) }
                 if (type != "OSMData") continue
-                block(unpack(blob), sink, wantWays)
+                block(unpack(blob), sink, wantWays, wantNodes, wantRelations)
             }
         }
     }
@@ -62,7 +65,7 @@ class PbfReader(private val file: File) {
         return out
     }
 
-    private fun block(data: ByteArray, sink: Sink, wantWays: Boolean) {
+    private fun block(data: ByteArray, sink: Sink, wantWays: Boolean, wantNodes: Boolean, wantRelations: Boolean) {
         val strings = ArrayList<String>()
         val groups = ArrayList<ByteArray>()
         var gran = 100L
@@ -83,9 +86,10 @@ class PbfReader(private val file: File) {
         for (g in groups) {
             Proto(g).forEach { f, p ->
                 when (f) {
-                    2 -> dense(p.bytes(), strings, sink, ::lat, ::lon)
+                    2 -> if (wantNodes) dense(p.bytes(), strings, sink, ::lat, ::lon) else p.skip()
                     3 -> if (wantWays) way(p.bytes(), strings, sink) else p.skip()
-                    1 -> node(p.bytes(), strings, sink, ::lat, ::lon)
+                    4 -> if (wantRelations) relation(p.bytes(), strings, sink) else p.skip()
+                    1 -> if (wantNodes) node(p.bytes(), strings, sink, ::lat, ::lon) else p.skip()
                     else -> p.skip()
                 }
             }
@@ -147,6 +151,23 @@ class PbfReader(private val file: File) {
             }
         }
         sink.way(id, refs, keys.indices.associate { st[keys[it]] to st[vals[it]] })
+    }
+
+    private fun relation(b: ByteArray, st: List<String>, sink: Sink) {
+        var id = 0L; var keys = IntArray(0); var vals = IntArray(0)
+        var roles = IntArray(0); var mem = LongArray(0); var types = IntArray(0)
+        Proto(b).forEach { f, p ->
+            when (f) {
+                1 -> id = p.varint()
+                2 -> keys = p.packedInt32()
+                3 -> vals = p.packedInt32()
+                8 -> roles = p.packedInt32()
+                9 -> mem = p.packedSInt64Delta()
+                10 -> types = p.packedInt32()
+                else -> p.skip()
+            }
+        }
+        sink.relation(id, keys.indices.associate { st[keys[it]] to st[vals[it]] }, mem, types, roles.map { st[it] })
     }
 }
 

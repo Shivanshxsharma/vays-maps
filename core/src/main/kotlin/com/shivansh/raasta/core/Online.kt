@@ -56,6 +56,7 @@ enum class PlaceKind(val label: String) {
     METRO("Metro station"), METRO_GATE("Metro gate"), RAIL("Station"), BUS("Bus stop"), AIRPORT("Airport"),
     FOOD("Restaurant"), CAFE("Café"), FUEL("Petrol pump"), HOSPITAL("Hospital"), SHOP("Shop"), MALL("Mall"),
     HOTEL("Hotel"), EDUCATION("School / college"), WORSHIP("Place of worship"), PARK("Park"),
+    MARKET("Market"), BANK("Bank / ATM"), PHARMACY("Pharmacy"), POLICE("Police"), CINEMA("Cinema"),
     LANDMARK("Landmark"), AREA("Area"), ROAD("Road"), OTHER("Place");
 
     companion object {
@@ -80,6 +81,11 @@ enum class PlaceKind(val label: String) {
                     "school", "college", "university" -> EDUCATION
                     "place_of_worship" -> WORSHIP
                     "bus_station" -> BUS
+                    "marketplace" -> MARKET
+                    "bank", "atm" -> BANK
+                    "pharmacy" -> PHARMACY
+                    "police" -> POLICE
+                    "cinema", "theatre" -> CINEMA
                     else -> OTHER
                 }
                 "shop" -> if (value == "mall" || value == "department_store") MALL else SHOP
@@ -158,6 +164,19 @@ class Geocoder(
             if (!dup) kept.add(h)
         }
         return kept.take(10).map { it.place }
+    }
+
+    /** What's at this point: house/building/road and the neighbourhood. Null when nothing is known there. */
+    fun reverse(lat: Double, lon: Double): Place? {
+        val ll = "lat=%.5f&lon=%.5f".format(java.util.Locale.ROOT, lat, lon)
+        val m = Json.parse(http.get("$nominatim/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=en&$ll", 12_000)).asMap()
+        val a = m["address"].asMap()
+        val road = listOfNotNull(a.s("house_number"), a.s("road") ?: a.s("pedestrian")).joinToString(" ").takeIf { a.s("road") != null || a.s("pedestrian") != null }
+        val local = listOfNotNull(a.s("neighbourhood") ?: a.s("residential") ?: a.s("quarter"), a.s("suburb") ?: a.s("city_district")).distinct()
+        val own = m.s("name")?.takeIf { it.isNotBlank() && it != a.s("road") }
+        val parts = (listOfNotNull(own, road) + local).distinct()
+        if (parts.isEmpty()) return null
+        return Place(parts[0], parts.drop(1).take(2).joinToString(", "), lat, lon)
     }
 
     private fun nominatim(q: String): List<Place> {

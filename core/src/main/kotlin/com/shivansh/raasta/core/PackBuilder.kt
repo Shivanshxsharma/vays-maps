@@ -226,7 +226,9 @@ class PackBuilder(http: Http, private val tiles: RoadTiles?, private val useOver
             }
             val landmarks = data.landmarks.values.filter { inCorridor(it.lat, it.lon) }
             val meta = PackMeta("", "", from.name, to.name, 0, from.latLon, to.latLon, 0.0, 0.0, "", 0)
-            return RoutePack(meta, ids, lat, lon, flags, ways, landmarks, emptyList())
+            val pois = data.pois.filter { inCorridor(it.lat, it.lon) }
+            val areas = data.areas.filter { a -> a.lat.indices.any { inCorridor(a.lat[it], a.lon[it]) } }
+            return RoutePack(meta, ids, lat, lon, flags, ways, landmarks, emptyList(), pois, areas)
         }
 
         private const val CELL = 0.0015 // ~165 m

@@ -60,14 +60,19 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 
 <table>
   <tr>
-    <td align="center" width="33%"><img src="docs/screens/home.png" alt="Home" width="260"><br><sub><b>Home</b><br>Your last ride on a real mini map, one tap to ride</sub></td>
-    <td align="center" width="33%"><img src="docs/screens/search.png" alt="New ride" width="260"><br><sub><b>New ride</b><br>Places, metro stations, restaurants, petrol pumps</sub></td>
-    <td align="center" width="33%"><img src="docs/screens/download.png" alt="Download" width="260"><br><sub><b>Download</b><br>Only the roads along your route, ~100 KB</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/home.png" alt="Home" width="260"><br><sub><b>Home</b><br>Where you are, saved places, your last ride</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/map.png" alt="You are here" width="260"><br><sub><b>You are here</b><br>Live dot, address, how accurate it is</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/metro.png" alt="Delhi Metro" width="260"><br><sub><b>Delhi Metro</b><br>Every line in its own colour, all interchanges</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screens/preview.png" alt="Ride preview" width="260"><br><sub><b>Ride preview</b><br>Route options and every prompt you'll hear</sub></td>
-    <td align="center"><img src="docs/screens/ride-split.png" alt="Riding" width="260"><br><sub><b>Riding</b><br>3D view, the split, your speed</sub></td>
-    <td align="center"><img src="docs/screens/ride-speed.png" alt="Riding with speed limit" width="260"><br><sub><b>Speed limits</b><br>AIIMS interchange, 60 km/h zone</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/trip.png" alt="Pickup and destination" width="260"><br><sub><b>Pickup and destination</b><br>A bike badge for the start, a flag pin for the end</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/nearby.png" alt="Nearby" width="260"><br><sub><b>Nearby</b><br>Petrol, food, hospitals, ATMs, metro</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/preview.png" alt="Ride preview" width="260"><br><sub><b>Ride preview</b><br>Routes, zoomable map, every prompt you'll hear</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screens/ride.png" alt="Riding" width="260"><br><sub><b>Riding</b><br>Landmarks around you, pinch to zoom</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/ride-split.png" alt="At a split" width="260"><br><sub><b>At a split</b><br>Which road, counted from the left</sub></td>
+    <td align="center" width="33%"><img src="docs/screens/ride-speed.png" alt="Speed limits" width="260"><br><sub><b>Speed limits</b><br>AIIMS interchange, 60 km/h zone</sub></td>
   </tr>
 </table>
 
@@ -99,11 +104,21 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
   <tr>
     <td valign="top">
       <h4>A map you can read at a glance</h4>
-      Sand main roads, grey local roads, cream flyover decks, teal underpasses, and a lime route that appears nowhere else. Only nearby roads are drawn, and the camera glides between GPS fixes.
+      All of Delhi is in the app (284 KB): main roads, the river, parks, areas and the whole metro in official colours. Zoom in and streets, flyovers, shops, petrol pumps and gates appear; each ~9 KB area is kept for offline use. Lime is the route and nothing else.
     </td>
     <td valign="top">
       <h4>No backend to run</h4>
-      Delhi's roads live in this repo as 2,521 small tiles (21 MB in total). The app downloads the few it needs straight from GitHub. Nothing to deploy.
+      Delhi's roads live in this repo as 2,521 small tiles (22 MB in total). The app downloads the few it needs straight from GitHub. Nothing to deploy.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h4>Knows where you really are</h4>
+      GPS plus network location, with the address, accuracy and age of the fix on screen, so you can confirm it before you ride. Off the mark? Tap the right spot and choose "Start here". Offline it still says "DTC Colony, at Shadipur metro".
+    </td>
+    <td valign="top">
+      <h4>Works with the screen off</h4>
+      Voice and GPS carry on in your pocket, with the next turn on the lock screen. Pinch to zoom while it follows you; drag to look around and it comes back by itself.
     </td>
   </tr>
 </table>
@@ -126,7 +141,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 * **Route matching**: OSRM's JSON rounds long OSM node ids and sometimes uses private lanes the tiles leave out, so routes are aligned to the map by coordinate, with detours and a corridor fallback.
 * **Search** (`core/Online.kt`): merges two free OpenStreetMap search services (Nominatim and Photon). Words like "metro station" or "restaurant" are read as the kind of place you want, not as part of its name, so results of that kind rank first and each one is labelled.
 * **Tiles** (`tools/`): a small dependency-free PBF reader cuts Delhi out of the Geofabrik northern-India extract into ~1.1 km gzip'd JSON tiles.
-* **App** (`app/`): Jetpack Compose, a custom Canvas map with grid culling and a gentle 3D tilt, Lucide icons, Inter type, iOS-style transitions.
+* **App** (`app/`): Jetpack Compose, a custom map engine (ground painted into cached tiles on background threads; labels, route and markers drawn live on top; gentle 3D tilt), Lucide icons, Inter type, iOS-style transitions.
 
 </details>
 
@@ -149,7 +164,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 Needs JDK 17 and the Android SDK.
 
 ```powershell
-.\gradlew :core:test                 # 13 engine tests on real Delhi data
+.\gradlew :core:test                 # 20 engine and map tests on real Delhi data
 .\gradlew :app:assembleRelease       # app/build/outputs/apk/release/app-release.apk
 .\gradlew :tools:installDist         # tools/build/install/tools/bin/tools
 ```
@@ -182,9 +197,10 @@ Set `RAASTA_TILES` to a folder or URL to build from other tiles (default: `data/
 - [x] Position-based voice, flyover / underpass cues, offline re-routing
 - [x] Speedometer, speed limits, pace-based arrival time
 - [x] Search that understands "Shadipur metro station", "restaurant in Connaught Place", "petrol pump Karol Bagh"
-- [x] 13 engine tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
+- [x] Live location with address, metro lines and stations, zoom-level map detail, nearby search, Home / Work
+- [x] Rides with the screen off (foreground service)
+- [x] 20 tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
 - [ ] Road-tested on a real phone
-- [ ] Background navigation (today the screen stays on)
 - [ ] Hindi phrasebook
 - [ ] Turn restrictions when re-routing offline
 - [ ] Own routing (or on-phone routing) instead of the public OSRM demo server

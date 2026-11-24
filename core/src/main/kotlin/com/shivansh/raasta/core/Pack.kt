@@ -96,11 +96,14 @@ class RoutePack(
     val ways: List<PackWay>,
     val landmarks: List<Landmark>,
     val routes: List<PlannedRoute>,
+    /** Places and parks/water along the ride, so the offline map has landmarks too. */
+    val pois: List<Poi> = emptyList(),
+    val areas: List<AreaShape> = emptyList(),
 ) {
     fun isSignal(node: Int) = (nodeFlags[node].toInt() and 1) != 0
 
     fun withRoutes(meta: PackMeta, routes: List<PlannedRoute>) =
-        RoutePack(meta, nodeIds, lat, lon, nodeFlags, ways, landmarks, routes)
+        RoutePack(meta, nodeIds, lat, lon, nodeFlags, ways, landmarks, routes, pois, areas)
 
     companion object { const val FLAG_SIGNAL: Byte = 1 }
 }
@@ -108,7 +111,8 @@ class RoutePack(
 /** Compact gzip'd binary format (*.rpk). Meta comes first so the route list can be shown without loading the graph. */
 object PackIO {
     private const val MAGIC = 0x52535441 // "RSTA"
-    private const val VERSION = 1
+    /** 2 added places and areas; version 1 files (app 0.5 and older) still open. */
+    private const val VERSION = 2
 
     fun write(pack: RoutePack, out: OutputStream) {
         DataOutputStream(GZIPOutputStream(out).buffered()).use { o ->
@@ -149,6 +153,16 @@ object PackIO {
                 for (x in r.nodePath) o.writeInt(x)
                 o.writeDouble(r.distance); o.writeDouble(r.duration); o.writeUTF(r.label)
             }
+            o.writeInt(pack.pois.size)
+            for (p in pack.pois) {
+                o.writeUTF(p.name.take(120)); o.writeUTF(p.kind.name)
+                o.writeDouble(p.lat); o.writeDouble(p.lon); o.writeByte(p.rank)
+            }
+            o.writeInt(pack.areas.size)
+            for (a in pack.areas) {
+                o.writeByte(a.kind.ordinal); o.writeInt(a.lat.size)
+                for (k in a.lat.indices) { o.writeFloat(a.lat[k].toFloat()); o.writeFloat(a.lon[k].toFloat()) }
+            }
         }
     }
 
@@ -159,11 +173,16 @@ object PackIO {
         if (!tmp.renameTo(file)) throw java.io.IOException("Could not save ${file.name}")
     }
 
-    fun readMeta(file: File): PackMeta = open(file.inputStream()).use { readMeta(it) }
+    fun readMeta(file: File): PackMeta = open(file.inputStream()).first.use { readMeta(it) }
 
     fun read(file: File): RoutePack = file.inputStream().use { read(it) }
 
-    fun read(input: InputStream): RoutePack = open(input).use { i ->
+    fun read(input: InputStream): RoutePack {
+        val (stream, version) = open(input)
+        return stream.use { i -> readBody(i, version) }
+    }
+
+    private fun readBody(i: DataInputStream, version: Int): RoutePack {
         val meta = readMeta(i)
         val n = i.readInt()
         val ids = LongArray(n); val lat = DoubleArray(n); val lon = DoubleArray(n); val flags = ByteArray(n)
@@ -186,15 +205,29 @@ object PackIO {
             val path = IntArray(i.readInt()) { i.readInt() }
             PlannedRoute(path, i.readDouble(), i.readDouble(), i.readUTF())
         }
-        RoutePack(meta, ids, lat, lon, flags, ways, landmarks, routes)
+        val pois = if (version < 2) emptyList() else List(i.readInt()) {
+            val name = i.readUTF()
+            val kind = i.readUTF()
+            Poi(name, PlaceKind.entries.firstOrNull { it.name == kind } ?: PlaceKind.OTHER,
+                i.readDouble(), i.readDouble(), i.readByte().toInt())
+        }
+        val areas = if (version < 2) emptyList() else List(i.readInt()) {
+            val kind = AreaKind.entries[i.readByte().toInt()]
+            val n2 = i.readInt()
+            val la = DoubleArray(n2)
+            val lo = DoubleArray(n2)
+            for (k in 0 until n2) { la[k] = i.readFloat().toDouble(); lo[k] = i.readFloat().toDouble() }
+            AreaShape(kind, la, lo)
+        }
+        return RoutePack(meta, ids, lat, lon, flags, ways, landmarks, routes, pois, areas)
     }
 
-    private fun open(input: InputStream): DataInputStream {
+    private fun open(input: InputStream): Pair<DataInputStream, Int> {
         val i = DataInputStream(GZIPInputStream(input).buffered())
         if (i.readInt() != MAGIC) throw java.io.IOException("Not a Vays Maps route pack")
         val v = i.readInt()
-        if (v != VERSION) throw java.io.IOException("Route pack version $v is not supported")
-        return i
+        if (v !in 1..VERSION) throw java.io.IOException("Route pack version $v is not supported")
+        return i to v
     }
 
     private fun writeMeta(o: DataOutputStream, m: PackMeta) {

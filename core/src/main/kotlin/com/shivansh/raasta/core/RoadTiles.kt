@@ -15,6 +15,8 @@ class OsmData {
     val signals = HashSet<Long>()
     val ways = LinkedHashMap<Long, Pair<LongArray, Map<String, String>>>()
     val landmarks = LinkedHashMap<String, Landmark>()
+    val pois = ArrayList<Poi>()
+    val areas = ArrayList<AreaShape>()
 
     fun addNode(id: Long, la: Double, lo: Double, signal: Boolean) {
         lat[id] = la; lon[id] = lo
@@ -68,6 +70,8 @@ class OsmData {
             val a = l.asList()
             addLandmark(Landmark(a[0] as String, a[1] as String, a[2] as Double, a[3] as Double))
         }
+        root["p"].asList().forEach { v -> MapCodec.poi(v)?.let { pois.add(it) } }
+        root["a"].asList().forEach { v -> areas.add(MapCodec.area(v)) }
     }
 }
 
@@ -75,7 +79,7 @@ class OsmData {
  * Delhi road data cut into ~1.1 km tiles and hosted as static files (GitHub). A route only needs the
  * handful of tiles it passes through, so nobody has to download all of Delhi.
  */
-class RoadTiles(private val http: Http, private val bases: List<String>) {
+class RoadTiles(private val http: Http, private val bases: List<String>, private val cacheDir: File? = null) {
     companion object {
         const val SIZE = 0.01
 
@@ -118,12 +122,26 @@ class RoadTiles(private val http: Http, private val bases: List<String>) {
         }
     }
 
-    private var known: Set<String>? = null
+    @Volatile private var known: Set<String>? = null
+
+    init { cacheDir?.mkdirs() }
 
     /** Which tiles exist (index.json). Tiles outside this set have no roads, or are outside Delhi. */
     fun index(): Set<String> {
         known?.let { return it }
-        val text = fetchText("index.json")
+        // Offline, fall back to the last list we saw, so cached tiles still work.
+        val cached = cacheDir?.let { File(it, "index.json") }
+        val text = try {
+            fetchText("index.json").also { t ->
+                if (cached != null) {
+                    // New data published: forget tiles from the old one.
+                    if (cached.exists() && cached.readText() != t) cacheDir?.listFiles { f -> f.name.endsWith(".json.gz") }?.forEach { it.delete() }
+                    save(cached, t.toByteArray())
+                }
+            }
+        } catch (e: IOException) {
+            if (cached?.exists() == true) cached.readText() else throw e
+        }
         val set = Json.parse(text).asMap()["tiles"].asList().map { it as String }.toHashSet()
         known = set
         return set
@@ -134,7 +152,7 @@ class RoadTiles(private val http: Http, private val bases: List<String>) {
         val data = OsmData()
         val pool = Executors.newFixedThreadPool(4)
         try {
-            val futures = wanted.map { k -> pool.submit(Callable { fetchGz("tiles/$k.json.gz") }) }
+            val futures = wanted.map { k -> pool.submit(Callable { tileText(k) }) }
             for ((i, f) in futures.withIndex()) {
                 val text = try { f.get() } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? IOException ?: IOException(e.cause)) }
                 data.addTile(text)
@@ -146,9 +164,38 @@ class RoadTiles(private val http: Http, private val bases: List<String>) {
         return data
     }
 
-    private fun fetchText(path: String): String = fetchBytes(path).toString(Charsets.UTF_8)
+    /** One tile for the live map: from the phone's cache if it's there, else from GitHub. Null = no such tile. */
+    fun shapes(key: String, allowNetwork: Boolean = true): TileShapes? {
+        // Check the published list once per session, so tiles kept from older data get replaced.
+        if (allowNetwork && known == null) synchronized(this) { if (known == null) runCatching { index() } }
+        val file = cacheDir?.let { File(it, "$key.json.gz") }
+        if (file?.exists() != true && (!allowNetwork || key !in index())) return null
+        return TileShapes.of(key, OsmData().also { it.addTile(tileText(key)) })
+    }
 
-    private fun fetchGz(path: String): String = GZIPInputStream(fetchBytes(path).inputStream()).readBytes().toString(Charsets.UTF_8)
+    private fun tileText(key: String): String {
+        val file = cacheDir?.let { File(it, "$key.json.gz") }
+        if (file != null && file.exists()) {
+            try { return gunzip(file.readBytes()) } catch (e: IOException) { file.delete() }
+        }
+        val bytes = fetchBytes("tiles/$key.json.gz")
+        val text = gunzip(bytes) // make sure it's whole before caching it
+        if (file != null) save(file, bytes)
+        return text
+    }
+
+    /** Write then rename, so an interrupted write never leaves half a tile behind. */
+    private fun save(f: File, b: ByteArray) {
+        runCatching {
+            val tmp = File(f.path + ".${Thread.currentThread().id}.tmp")
+            tmp.writeBytes(b)
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }
+    }
+
+    private fun gunzip(b: ByteArray): String = GZIPInputStream(b.inputStream()).readBytes().toString(Charsets.UTF_8)
+
+    private fun fetchText(path: String): String = fetchBytes(path).toString(Charsets.UTF_8)
 
     private fun fetchBytes(path: String): ByteArray {
         var last: IOException? = null

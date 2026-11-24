@@ -7,6 +7,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +63,15 @@ import com.composables.icons.lucide.TrainFront
 import com.composables.icons.lucide.TramFront
 import com.composables.icons.lucide.Trees
 import com.composables.icons.lucide.Utensils
+import com.composables.icons.lucide.House
+import com.composables.icons.lucide.Briefcase
+import com.composables.icons.lucide.History
+import com.shivansh.raasta.LocState
+import com.composables.icons.lucide.Store
+import com.composables.icons.lucide.Banknote
+import com.composables.icons.lucide.Pill
+import com.composables.icons.lucide.Shield
+import com.composables.icons.lucide.Clapperboard
 import com.shivansh.raasta.core.PlaceKind
 import com.shivansh.raasta.AppModel
 import com.shivansh.raasta.PackItem
@@ -81,7 +92,7 @@ fun RaastaApp(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                 Box(Modifier.fillMaxSize().background(C.bg)) {
                     when (s) {
                         Screen.Home -> HomeScreen(vm, requestLocation)
-                        Screen.NewRoute -> NewRouteScreen(vm, requestLocation)
+                        Screen.NewRoute -> PlanScreen(vm, requestLocation)
                         is Screen.Pack -> PackScreen(vm, requestLocation)
                         Screen.Navigate -> NavScreen(vm)
                     }
@@ -112,7 +123,7 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                 Wordmark(20.sp)
                 Spacer(Modifier.weight(1f))
                 Box(
-                    Modifier.size(40.dp).clip(CircleShape).background(C.grouped).pressable({ vm.error = null; vm.screen = Screen.NewRoute }),
+                    Modifier.size(40.dp).clip(CircleShape).background(C.grouped).pressable({ vm.plan() }),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Lucide.Plus, "New ride", tint = C.label, modifier = Modifier.size(20.dp)) }
             }
@@ -122,13 +133,30 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
             Spacer(Modifier.height(22.dp))
             Row(
                 Modifier.appear(3).fillMaxWidth().height(56.dp).clip(RoundedCornerShape(18.dp)).background(C.grouped)
-                    .pressable({ vm.error = null; vm.screen = Screen.NewRoute }).padding(horizontal = 18.dp),
+                    .pressable({ vm.openSearch = true; vm.plan() }).padding(horizontal = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Lucide.Search, null, tint = C.secondary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
                 Text("Places, metro stations, restaurants…", style = T.body.copy(color = C.secondary))
             }
+            val go = buildList {
+                vm.home?.let { add(Triple(Lucide.House, "Home", it)) }
+                vm.work?.let { add(Triple(Lucide.Briefcase, "Work", it)) }
+                vm.recents.take(4).forEach { add(Triple(if (it.kind == PlaceKind.OTHER) Lucide.History else iconFor(it.kind), it.name, it)) }
+            }
+            if (go.isNotEmpty()) LazyRow(Modifier.appear(4).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(go) { (icon, name, place) ->
+                    Row(
+                        Modifier.height(40.dp).clip(CircleShape).background(C.grouped).pressable({ vm.plan(to = place) }).padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(icon, null, tint = C.secondary, modifier = Modifier.size(16.dp))
+                        Text("  $name", style = T.subhead.copy(color = C.label), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 170.dp))
+                    }
+                }
+            }
+            HereStrip(vm, requestLocation, Modifier.appear(5))
         }
 
         val packs = vm.packs
@@ -157,6 +185,41 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
     }
 }
 
+/** Where you are, on a real map. Tap to open the full map. */
+@Composable
+private fun HereStrip(vm: AppModel, requestLocation: (() -> Unit) -> Unit, modifier: Modifier) {
+    val now = rememberNow()
+    val here = vm.here
+    val shape = RoundedCornerShape(24.dp)
+    Box(
+        modifier.padding(top = 22.dp).fillMaxWidth().height(200.dp).clip(shape).background(MapC.land)
+            .pressable({ if (vm.loc == LocState.NO_PERMISSION) requestLocation { vm.startLive() } else vm.plan() }),
+    ) {
+        val me = meDot(here, now)
+        if (me != null && vm.inDelhi) HereMap(vm.city, vm.tiles, me, Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.56f to Color(0xE6101010), 1f to Color(0xFF101010))))
+        Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+            val (title, sub) = when {
+                vm.loc == LocState.NO_PERMISSION -> "See where you are" to "Tap to allow location"
+                vm.loc == LocState.SWITCHED_OFF -> "Location is switched off" to "Turn it on in your phone's settings"
+                !vm.inDelhi -> "You're outside Delhi" to "Open the map to plan a ride in Delhi"
+                here == null -> "Finding you…" to "Quicker near a window or outside"
+                else -> (vm.herePlace?.name?.substringBefore(", ") ?: "You are here") to
+                    listOfNotNull(
+                        vm.herePlace?.let { it.name.substringAfter(", ", "").ifBlank { it.detail } }?.takeIf { it.isNotBlank() },
+                        "accurate to ${here.fix.accuracy.toInt().coerceAtLeast(1)} m",
+                    ).joinToString(" · ")
+            }
+            Text("YOU ARE HERE", style = T.label)
+            Text(title, style = T.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            Text(sub, style = T.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Box(Modifier.align(Alignment.TopEnd).padding(12.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+            Icon(Lucide.ArrowUpRight, null, tint = C.label, modifier = Modifier.size(17.dp))
+        }
+    }
+}
+
 /** The most recent ride, big: a real map of it, drawn in, with the two actions. */
 @Composable
 private fun HeroRide(item: PackItem, vm: AppModel, requestLocation: (() -> Unit) -> Unit, modifier: Modifier) {
@@ -164,7 +227,7 @@ private fun HeroRide(item: PackItem, vm: AppModel, requestLocation: (() -> Unit)
     val lp = item.preview
     val shape = RoundedCornerShape(28.dp)
     Box(modifier.fillMaxWidth().height(340.dp).clip(shape).background(MapC.land).pressable({ vm.openPack(m.id) })) {
-        if (lp != null && lp.paths.isNotEmpty()) MiniMap(lp.layers, lp.paths[0], Modifier.fillMaxSize(), drawIn = true, padding = 0.12f, reserveBottom = 0.52f)
+        if (lp != null && lp.paths.isNotEmpty()) MiniMap(lp, vm.city, lp.paths[0], Modifier.fillMaxSize(), drawIn = true, padding = 0.09f, reserveBottom = 0.47f, markers = true)
         // Scrim so text reads over the map.
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 0.42f to Color.Transparent, 0.62f to Color(0xE6101110), 1f to Color(0xFF101110))))
         Box(Modifier.align(Alignment.TopEnd).padding(14.dp).size(36.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
@@ -175,7 +238,8 @@ private fun HeroRide(item: PackItem, vm: AppModel, requestLocation: (() -> Unit)
             Text(m.toName, style = T.title1.copy(fontSize = 30.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
             Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                 Stat(Phrases.duration(m.duration).substringBefore(" "), "MIN")
-                Stat(Phrases.shortDistance(m.distance).substringBefore(" "), Phrases.shortDistance(m.distance).substringAfter(" ").uppercase())
+                val km = Phrases.shortDistance(lp?.paths?.firstOrNull()?.length ?: m.distance)
+                Stat(km.substringBefore(" "), km.substringAfter(" ").uppercase())
                 lp?.guidance?.firstOrNull()?.let { g -> Stat("${g.count { it.kind != Kind.ARRIVE }}", "PROMPTS") }
             }
             Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -204,7 +268,7 @@ private fun RideRow(item: PackItem, vm: AppModel, modifier: Modifier) {
     Row(modifier.fillMaxWidth().pressable({ vm.openPack(m.id) }).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(64.dp).clip(RoundedCornerShape(18.dp))) {
             val lp = item.preview
-            if (lp != null && lp.paths.isNotEmpty()) MiniMap(lp.layers, lp.paths[0], Modifier.fillMaxSize(), padding = 0.14f)
+            if (lp != null && lp.paths.isNotEmpty()) MiniMap(lp, vm.city, lp.paths[0], Modifier.fillMaxSize(), padding = 0.16f)
             else Box(Modifier.fillMaxSize().background(MapC.land))
         }
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
@@ -213,7 +277,7 @@ private fun RideRow(item: PackItem, vm: AppModel, modifier: Modifier) {
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(Phrases.duration(m.duration), style = T.headline.copy(fontFeatureSettings = "tnum"))
-            Text(Phrases.shortDistance(m.distance), style = T.footnote)
+            Text(Phrases.shortDistance(item.preview?.paths?.firstOrNull()?.length ?: m.distance), style = T.footnote)
         }
         Icon(Lucide.ChevronRight, null, tint = C.tertiary, modifier = Modifier.padding(start = 8.dp).size(18.dp))
     }
@@ -245,84 +309,12 @@ private fun EmptyHome(vm: AppModel) {
             }
         }
         Spacer(Modifier.height(26.dp))
-        GlossCapsule("Plan your first ride", Modifier.appear(8).fillMaxWidth(), icon = Lucide.Bike) { vm.error = null; vm.screen = Screen.NewRoute }
-    }
-}
-
-// ---------------------------------------------------------------- new route
-
-@Composable
-private fun NewRouteScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
-    BackHandler { if (vm.busy == null) vm.screen = Screen.Home }
-    var editing by remember { mutableIntStateOf(if (vm.fromPlace == null) 0 else 1) }
-    var query by remember { mutableStateOf("") }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(editing) { runCatching { focus.requestFocus() } }
-
-    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(horizontal = 20.dp)) {
-        Row(Modifier.fillMaxWidth().height(60.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("New ride", style = T.title2, modifier = Modifier.weight(1f))
-            Box(
-                Modifier.size(36.dp).clip(CircleShape).background(C.grouped).pressable({ if (vm.busy == null) vm.screen = Screen.Home }),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Lucide.X, "Close", tint = C.label, modifier = Modifier.size(18.dp)) }
-        }
-
-        AnimatedContent(targetState = vm.busy != null, label = "busy", modifier = Modifier.weight(1f)) { busy ->
-            if (busy) DownloadProgress(vm) else Column(Modifier.fillMaxSize()) {
-                Column(Modifier.appear(0).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(C.grouped)) {
-                    PlaceField(
-                        active = editing == 0, label = vm.fromPlace?.name, placeholder = "Start",
-                        query = query, onQuery = { query = it }, focus = focus,
-                        leading = { Box(Modifier.size(12.dp).clip(CircleShape).border(3.dp, C.label, CircleShape)) },
-                        onClick = { editing = 0; query = ""; vm.clearResults() },
-                        onSearch = { vm.search(query) }, searching = vm.searching && editing == 0,
-                    )
-                    Box(Modifier.padding(start = 52.dp).fillMaxWidth().height(1.dp).background(C.separator))
-                    PlaceField(
-                        active = editing == 1, label = vm.toPlace?.name, placeholder = "Destination",
-                        query = query, onQuery = { query = it }, focus = focus,
-                        leading = { Icon(Lucide.MapPin, null, tint = C.blue, modifier = Modifier.size(18.dp)) },
-                        onClick = { editing = 1; query = ""; vm.clearResults() },
-                        onSearch = { vm.search(query) }, searching = vm.searching && editing == 1,
-                    )
-                }
-                Spacer(Modifier.height(18.dp))
-                LazyColumn(Modifier.weight(1f)) {
-                    if (editing == 0 && vm.results.isEmpty()) {
-                        item {
-                            PlaceRow(Lucide.LocateFixed, "My location", "Use GPS for the start", Modifier.appear(1)) {
-                                requestLocation {
-                                    if (!vm.useMyLocation()) vm.error = "No GPS fix yet. Step outside for a moment, or search for the start."
-                                    else if (vm.fromPlace != null) { editing = 1; query = ""; vm.clearResults() }
-                                }
-                            }
-                        }
-                    }
-                    vm.error?.let { e -> item { Text(e, style = T.footnote.copy(color = C.red), modifier = Modifier.padding(vertical = 12.dp)) } }
-                    if (vm.results.isNotEmpty()) {
-                        item { Text("PLACES IN DELHI", style = T.label, modifier = Modifier.padding(top = 6.dp, bottom = 6.dp)) }
-                        itemsIndexed(vm.results) { i, p ->
-                            val sub = listOf(p.kind.takeIf { it != PlaceKind.OTHER }?.label, p.detail.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
-                            PlaceRow(iconFor(p.kind), p.name, sub, Modifier.appear(i, delayStep = 35)) {
-                                if (editing == 0) { vm.fromPlace = p; editing = 1 } else vm.toPlace = p
-                                query = ""; vm.clearResults()
-                            }
-                        }
-                    }
-                }
-                GlossCapsule("Download ride", Modifier.fillMaxWidth(), icon = Lucide.Download, enabled = vm.fromPlace != null && vm.toPlace != null) { vm.download() }
-                Text(
-                    "Saves only the roads along your route, usually under 200 KB.",
-                    style = T.footnote, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp).navigationBarsPadding(),
-                )
-            }
-        }
+        GlossCapsule("Plan your first ride", Modifier.appear(8).fillMaxWidth(), icon = Lucide.Bike) { vm.plan() }
     }
 }
 
 /** A Lucide icon for each kind of place in search results. */
-private fun iconFor(k: PlaceKind) = when (k) {
+fun iconFor(k: PlaceKind) = when (k) {
     PlaceKind.METRO, PlaceKind.METRO_GATE -> Lucide.TramFront
     PlaceKind.RAIL -> Lucide.TrainFront
     PlaceKind.BUS -> Lucide.BusFront
@@ -339,60 +331,22 @@ private fun iconFor(k: PlaceKind) = when (k) {
     PlaceKind.LANDMARK -> Lucide.Landmark
     PlaceKind.AREA -> Lucide.Building2
     PlaceKind.ROAD -> Lucide.Route
+    PlaceKind.MARKET -> Lucide.Store
+    PlaceKind.BANK -> Lucide.Banknote
+    PlaceKind.PHARMACY -> Lucide.Pill
+    PlaceKind.POLICE -> Lucide.Shield
+    PlaceKind.CINEMA -> Lucide.Clapperboard
     PlaceKind.OTHER -> Lucide.MapPin
 }
 
 @Composable
-private fun PlaceRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
-    Row(modifier.fillMaxWidth().pressable(onClick).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(C.grouped), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = C.label, modifier = Modifier.size(18.dp))
-        }
-        Column(Modifier.padding(start = 14.dp)) {
-            Text(title, style = T.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (sub.isNotBlank()) Text(sub, style = T.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
-private fun PlaceField(
-    active: Boolean, label: String?, placeholder: String, query: String, onQuery: (String) -> Unit, focus: FocusRequester,
-    leading: @Composable () -> Unit, onClick: () -> Unit, onSearch: () -> Unit, searching: Boolean,
-) {
-    Row(
-        Modifier.fillMaxWidth().height(58.dp).clickable(onClick = onClick).padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.width(18.dp), contentAlignment = Alignment.Center) { leading() }
-        Spacer(Modifier.width(16.dp))
-        if (active) {
-            Box(Modifier.weight(1f)) {
-                if (query.isEmpty()) Text(label ?: "${placeholder}: place, metro, restaurant…", style = T.body.copy(color = C.tertiary), maxLines = 1)
-                BasicTextField(
-                    value = query, onValueChange = onQuery, singleLine = true,
-                    textStyle = T.body, cursorBrush = SolidColor(C.blue),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
-                )
-            }
-            if (searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = C.secondary)
-            else if (query.isNotEmpty()) Icon(Lucide.Search, "Search", tint = C.label, modifier = Modifier.size(20.dp).clickable(onClick = onSearch))
-        } else {
-            Text(label ?: placeholder, style = T.body.copy(color = if (label == null) C.tertiary else C.label), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun DownloadProgress(vm: AppModel) {
+fun DownloadProgress(vm: AppModel) {
     val steps = listOf("Finding routes", "Downloading Delhi road tiles", "Counting the roads at every split")
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
         VaysMark(64.dp, animate = true, modifier = Modifier.appear(0))
         Spacer(Modifier.height(22.dp))
         Text("Getting your ride ready", style = T.title1, modifier = Modifier.appear(1))
-        Text("${vm.fromPlace?.name} → ${vm.toPlace?.name}", style = T.subhead, modifier = Modifier.appear(2).padding(top = 4.dp, bottom = 26.dp))
+        Text("${if (vm.fromHere) "Your location" else vm.fromPlace?.name} → ${vm.toPlace?.name}", style = T.subhead, modifier = Modifier.appear(2).padding(top = 4.dp, bottom = 26.dp))
         steps.forEachIndexed { i, s ->
             Row(Modifier.appear(3 + i).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {

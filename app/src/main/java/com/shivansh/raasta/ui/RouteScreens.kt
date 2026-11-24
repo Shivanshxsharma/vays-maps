@@ -19,6 +19,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -55,6 +60,8 @@ import com.shivansh.raasta.Screen
 import com.shivansh.raasta.core.*
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
+import kotlin.math.max
 
 // ---------------------------------------------------------------- ride preview
 
@@ -70,67 +77,114 @@ fun PackScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
     val idx = vm.routeIndex.coerceIn(0, lp.paths.size - 1)
     val path = lp.paths[idx]
     val ms = lp.guidance[idx]
-    val sheetH = (LocalConfiguration.current.screenHeightDp * 0.56f).dp
+    val full = (LocalConfiguration.current.screenHeightDp * 0.56f).dp
+    val peek = 262.dp
+    val d = LocalDensity.current
+    val scope = rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
-    // The sheet rises into place.
-    val rise = remember { Animatable(1f) }
-    LaunchedEffect(Unit) { rise.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = 300f)) }
-    val sheetPx = with(LocalDensity.current) { sheetH.toPx() }
+    // The sheet rises into place; pull it down to see more map.
+    val span = with(d) { (full - peek).toPx() }
+    val off = remember { Animatable(with(d) { full.toPx() }) }
+    var open by remember { mutableStateOf(true) }
+    LaunchedEffect(open) { off.animateTo(if (open) 0f else span, spring(dampingRatio = 0.86f, stiffness = 340f)) }
+    val state = remember { MapState(MapCamera().also { it.minScale = 0.0065f * d.density; it.maxScale = 5f * d.density }, scope) }
+    val bounds = remember(path) { boundsOf(path) }
+    LaunchedEffect(path, open, state.cam.size) {
+        val p = d.density
+        val first = state.cam.cx == 0f && state.cam.cy == 0f
+        if (state.cam.size.width > 0f) state.fit(bounds, 50 * p, 120 * p, 50 * p, with(d) { (if (open) full else peek).toPx() } + 46 * p, animate = !first)
+    }
+    val now = rememberNow()
+    val markers = remember(path) {
+        val n = path.nodes.size - 1
+        listOf(
+            MapMarker(World.x(path.lon(0)), World.y(path.lat(0)), false, lp.pack.meta.fromName),
+            MapMarker(World.x(path.lon(n)), World.y(path.lat(n)), true, lp.pack.meta.toName),
+        )
+    }
+    val drag = Modifier.draggable(
+        rememberDraggableState { dy -> scope.launch { off.snapTo((off.value + dy).coerceIn(0f, span)) } }, Orientation.Vertical,
+        onDragStopped = { v ->
+            val want = if (v > 600) false else if (v < -600) true else off.value < span / 2
+            if (want == open) off.animateTo(if (open) 0f else span, spring(dampingRatio = 0.86f, stiffness = 340f)) else open = want
+        },
+    )
 
     Box(Modifier.fillMaxSize()) {
-        PreviewMap(lp.layers, path, ms, Modifier.fillMaxSize(), topInset = 70.dp, bottomInset = sheetH)
+        LiveMap(
+            state, vm.city, vm.tiles, Modifier.fillMaxSize(), extra = lp.cells, on = vm.layersOn, route = path, maneuvers = ms,
+            markers = markers, me = meDot(vm.here, now),
+        )
+        TopScrim()
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
             GlassCircle(Lucide.ChevronLeft, "Back", size = 44.dp) { vm.screen = Screen.Home }
             Spacer(Modifier.weight(1f))
             GlassCircle(Lucide.Trash2, "Delete", tint = C.red, size = 44.dp) { confirmDelete = true }
         }
+        MapButtons(
+            state, Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = full + 12.dp).graphicsLayer { translationY = off.value.coerceAtMost(span) },
+            onLocate = {
+                val h = vm.here
+                if (h != null) state.show(World.x(h.fix.lon), World.y(h.fix.lat), max(state.cam.scale, 0.3f * d.density), 0f, with(d) { full.toPx() } - off.value)
+                else requestLocation { vm.startLive() }
+            },
+        )
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(sheetH)
-                .graphicsLayer { translationY = rise.value * sheetPx }
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(C.grouped),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(full)
+                .graphicsLayer { translationY = off.value }
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(C.grouped).blockMap(),
         ) {
-            Grabber()
-            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 28.dp)) {
-                item {
-                    Text("FROM ${lp.pack.meta.fromName.uppercase()}", style = T.label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
-                    Text(lp.pack.meta.toName, style = T.title1, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val r = lp.pack.routes[idx]
-                    Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Bottom) {
-                        Text(Phrases.duration(r.duration).substringBefore(" "), style = T.number)
-                        Text(" MIN", style = T.label, modifier = Modifier.padding(bottom = 8.dp))
-                        Spacer(Modifier.width(18.dp))
-                        Text(Phrases.shortDistance(path.length).substringBefore(" "), style = T.number.copy(color = C.secondary))
-                        Text(" " + Phrases.shortDistance(path.length).substringAfter(" ").uppercase(), style = T.label, modifier = Modifier.padding(bottom = 8.dp))
-                    }
-                    r.label.substringAfter(" · ", "").takeIf { it.isNotBlank() }?.let { Text(it, style = T.footnote) }
-                    if (lp.paths.size > 1) {
-                        Spacer(Modifier.height(14.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            itemsIndexed(lp.paths) { i, p ->
-                                val sel = i == idx
-                                Column(
-                                    Modifier.clip(RoundedCornerShape(16.dp)).background(C.elevated)
-                                        .border(1.5.dp, if (sel) C.blue else Color.Transparent, RoundedCornerShape(16.dp))
-                                        .pressable({ vm.routeIndex = i }).padding(horizontal = 14.dp, vertical = 10.dp),
-                                ) {
-                                    Text(Phrases.duration(lp.pack.routes[i].duration), style = T.headline)
-                                    Text("${Phrases.shortDistance(p.length)} · ${lp.pack.routes[i].label.substringBefore(" · ")}", style = T.footnote)
-                                }
+            Box(drag.fillMaxWidth().clickable(remember { MutableInteractionSource() }, null) { open = !open }) { Grabber() }
+            Column(drag.padding(horizontal = 22.dp)) {
+                Text("FROM ${lp.pack.meta.fromName.uppercase()}", style = T.label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
+                Text(lp.pack.meta.toName, style = T.title1, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val r = lp.pack.routes[idx]
+                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Bottom) {
+                    Text(Phrases.duration(r.duration).substringBefore(" "), style = T.number)
+                    Text(" MIN", style = T.label, modifier = Modifier.padding(bottom = 8.dp))
+                    Spacer(Modifier.width(18.dp))
+                    Text(Phrases.shortDistance(path.length).substringBefore(" "), style = T.number.copy(color = C.secondary))
+                    Text(" " + Phrases.shortDistance(path.length).substringAfter(" ").uppercase(), style = T.label, modifier = Modifier.padding(bottom = 8.dp))
+                }
+                r.label.substringAfter(" · ", "").takeIf { it.isNotBlank() }?.let { Text(it, style = T.footnote) }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GlossCapsule("Start ride", Modifier.weight(1.3f), icon = Lucide.Bike) { requestLocation { vm.startNavigation(simulate = false) } }
+                    LineCapsule("Demo", Modifier.weight(0.7f), icon = Lucide.Play) { vm.startNavigation(simulate = true) }
+                }
+                val away = vm.here?.let { h -> Geo.dist(h.latLon, LatLon(path.lat(0), path.lon(0))) }
+                val onIt = vm.here?.let { h -> (0 until path.nodes.size).any { Geo.dist(h.fix.lat, h.fix.lon, path.lat(it), path.lon(it)) < 150 } } ?: true
+                if (away != null && away > 300 && !onIt && vm.inDelhi) Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("You're ${Phrases.shortDistance(away)} from the start of this ride.", style = T.footnote.copy(color = C.label), modifier = Modifier.weight(1f))
+                    Text("Ride from here", style = T.footnote.copy(color = C.blue, fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.pressable({ val m = lp.pack.meta; vm.plan(to = Place(m.toName, "", m.to.lat, m.to.lon)) }).padding(8.dp))
+                }
+                if (lp.paths.size > 1) {
+                    Spacer(Modifier.height(14.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        itemsIndexed(lp.paths) { i, p ->
+                            val sel = i == idx
+                            Column(
+                                Modifier.clip(RoundedCornerShape(16.dp)).background(C.elevated)
+                                    .border(1.5.dp, if (sel) C.blue else Color.Transparent, RoundedCornerShape(16.dp))
+                                    .pressable({ vm.routeIndex = i }).padding(horizontal = 14.dp, vertical = 10.dp),
+                            ) {
+                                Text(Phrases.duration(lp.pack.routes[i].duration), style = T.headline)
+                                Text("${Phrases.shortDistance(p.length)} · ${lp.pack.routes[i].label.substringBefore(" · ")}", style = T.footnote)
                             }
                         }
                     }
-                    Spacer(Modifier.height(20.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        GlossCapsule("Start ride", Modifier.weight(1.3f), icon = Lucide.Bike) { requestLocation { vm.startNavigation(simulate = false) } }
-                        LineCapsule("Demo", Modifier.weight(0.7f), icon = Lucide.Play) { vm.startNavigation(simulate = true) }
-                    }
-                    if (!vm.speaker.offlineVoice) {
-                        Text(
-                            "Your phone's voice needs internet. Install an offline English (India) voice in Settings › Text-to-speech.",
-                            style = T.footnote.copy(color = C.red), modifier = Modifier.padding(top = 10.dp),
-                        )
-                    }
-                    Text("WHAT YOU'LL HEAR", style = T.label, modifier = Modifier.padding(top = 30.dp, bottom = 8.dp))
+                }
+                if (!vm.speaker.offlineVoice) {
+                    Text(
+                        "Your phone's voice needs internet. Install an offline English (India) voice in Settings › Text-to-speech.",
+                        style = T.footnote.copy(color = C.red), modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+            }
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 28.dp)) {
+                item {
+                    Text("WHAT YOU'LL HEAR", style = T.label, modifier = Modifier.padding(top = 22.dp, bottom = 8.dp))
                 }
                 itemsIndexed(ms) { i, m -> TimelineRow(m, first = i == 0, last = i == ms.size - 1, modifier = Modifier.appear(i, delayStep = 40)) }
                 item { Spacer(Modifier.navigationBarsPadding()) }
@@ -187,12 +241,21 @@ fun NavScreen(vm: AppModel) {
     if (lp == null || s == null) return
 
     Box(Modifier.fillMaxSize()) {
-        DriveMap(lp.layers, s, Modifier.fillMaxSize())
+        val end = lp.pack.meta.to
+        val dest = remember(lp) { listOf(MapMarker(World.x(end.lon), World.y(end.lat), true, lp.pack.meta.toName)) }
+        DriveMap(lp, vm.city, vm.tiles, vm.layersOn, s, Modifier.fillMaxSize(), dest, recentreBottom = 250.dp)
         ManeuverBanner(s, vm, Modifier.align(Alignment.TopCenter))
         Column(Modifier.align(Alignment.BottomCenter)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.Bottom) {
                 SpeedCluster(s)
-                Spacer(Modifier.weight(1f))
+                Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.BottomCenter) {
+                    // The road you're on, small: for confirming, never needed for following.
+                    val road = remember(s.pathVersion, (s.progress / 15).toInt()) { s.path.way(s.path.segmentAt(s.progress)).label }
+                    if (road != null && s.status != NavStatus.OUTSIDE_AREA) Text(
+                        road, style = T.footnote.copy(color = C.label, fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.panel(CircleShape).padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
+                }
                 AnimatedContent(targetState = vm.muted, label = "mute", transitionSpec = { (scaleIn(initialScale = 0.7f) + fadeIn()) togetherWith fadeOut() }) { muted ->
                     GlassCircle(if (muted) Lucide.VolumeX else Lucide.Volume2, "Mute", size = 52.dp, tint = if (muted) C.red else C.label) { vm.toggleMute() }
                 }
