@@ -13,8 +13,8 @@ android {
         applicationId = "com.shivansh.vaysmaps"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.6.0"
+        versionCode = 9
+        versionName = "0.7.0"
         // For testing tiles before they're published: -PtileBase=file:/sdcard/Android/data/com.shivansh.vaysmaps/files/data
         buildConfigField("String", "TILE_BASE", "\"${providers.gradleProperty("tileBase").getOrElse("")}\"")
     }

@@ -3,6 +3,7 @@ package com.shivansh.raasta.tools
 import com.shivansh.raasta.core.Delhi
 import com.shivansh.raasta.core.Geo
 import com.shivansh.raasta.core.LatLon
+import com.shivansh.raasta.core.PlaceKind
 import com.shivansh.raasta.core.RoadClass
 import com.shivansh.raasta.core.RoadTiles
 import java.io.File
@@ -20,7 +21,8 @@ object TileCutter {
     private val ROADS = Regex("^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)(_link)?$")
     private const val MARGIN = 0.03
 
-    fun run(pbf: File, outDir: File, cityFile: File = File("app/src/main/assets/city.map")) {
+    /** [overture] set: only rebuild the place file (app/src/main/assets/places.db), leaving map tiles alone. */
+    fun run(pbf: File, outDir: File, cityFile: File = File("app/src/main/assets/city.map"), overture: File? = null) {
         val t0 = System.currentTimeMillis()
         val extras = MapExtras()
         // Relations come last in the file but say which ways matter (metro tracks, river outlines): read them first.
@@ -90,6 +92,14 @@ object TileCutter {
         check(sorted) { "PBF nodes are not sorted by id" }
         extras.assembleRelations { locate(it) }
         extras.dedupePois()
+        if (overture != null) {
+            val roads = ways.mapNotNull { w ->
+                val name = w.tags["name:en"] ?: w.tags["name"] ?: return@mapNotNull null
+                locate(w.refs[w.refs.size / 2])?.let { name to it }
+            }
+            writePlaces(extras, roads, overture, File(cityFile.parentFile, "places.db"))
+            return
+        }
         extras.writeCity(cityFile, cityRoads)
         val nid = ids.toArray(); val nlat = lats.toArray(); val nlon = lons.toArray()
         println("Read ${nid.size} nodes in/near Delhi, ${ways.size} road ways, ${signals.size} signals, ${landmarks.size} landmarks " +
@@ -188,6 +198,34 @@ object TileCutter {
         index.append("]}")
         File(outDir, "index.json").writeText(index.toString())
         println("Wrote ${keys.size} tiles ($kept roads), ${bytes / 1024 / 1024} MB total, in ${(System.currentTimeMillis() - t0) / 1000}s")
+    }
+
+    private fun writePlaces(x: MapExtras, roads: List<Pair<String, LatLon>>, overture: File, out: File) {
+        val areas = x.labels.map { it.first to it.third }
+        val osm = ArrayList<SrcPlace>()
+        fun add(name: String, kind: PlaceKind, label: String, p: LatLon, rank: Int, conf: Double, addr: String = "", alt: String = "") =
+            osm.add(SrcPlace(name, kind, label, p.lat, p.lon, rank, conf, addr, true, alt))
+        val lines = x.metroLines()
+        for (s in x.mergedStations(lines)) add(s.name, PlaceKind.METRO, "Metro station", LatLon(s.lat, s.lon), 0, 1.0, s.lines.joinToString(" · ") { lines[it].name })
+        for ((n, r, p) in x.labels.distinctBy { it.first.lowercase() + (it.third.lat * 50).toInt() }) add(n, PlaceKind.AREA, "Area", p, if (r == 0) 1 else 2, 0.95)
+        for (p in x.pois) add(p.name, p.kind, p.kind.label, LatLon(p.lat, p.lon), p.rank, 0.9, alt = x.alts[p.name].orEmpty())
+        // The same place may already be in from the map's own list; the merge below drops the twin.
+        val known = x.pois.groupBy { it.name }
+        for (p in x.all) if (known[p.name].orEmpty().none { Geo.dist(it.lat, it.lon, p.lat, p.lon) < 130 }) osm.add(p)
+        val labelled = x.labels.map { it.first.lowercase() }.toSet()
+        for ((n, p) in x.pockets.distinctBy { it.first.lowercase() + (it.second.lat * 100).toInt() + (it.second.lon * 100).toInt() })
+            if (n.lowercase() !in labelled) add(n, PlaceKind.AREA, "Colony", p, 4, 0.8)
+        // A road is listed once per couple of kilometres, so "Pankha Road" finds the stretch near you.
+        for ((_, l) in roads.filter { Delhi.contains(it.second) && it.first.length > 3 }.groupBy { it.first.lowercase() + "|" + Math.round(it.second.lat * 40) + "|" + Math.round(it.second.lon * 40) })
+            add(l[0].first, PlaceKind.ROAD, "Road", l[l.size / 2].second, 5, 0.8)
+        // Places riders sent in (data/community.tsv: name, kind, lat, lon, address).
+        File("data/community.tsv").takeIf { it.exists() }?.forEachLine { l ->
+            val p = l.split('\t')
+            if (l.startsWith("#") || p.size < 4) return@forEachLine
+            val kind = PlaceKind.entries.firstOrNull { it.name == p[1] } ?: PlaceKind.OTHER
+            osm.add(SrcPlace(p[0].trim(), kind, kind.label, p[2].toDouble(), p[3].toDouble(), 3, 0.95, p.getOrElse(4) { "" }.trim(), true))
+        }
+        PlaceDbWriter.write(OvertureCleaner.run(overture, osm, areas), out)
     }
 
     private fun str(sb: StringBuilder, s: String) {

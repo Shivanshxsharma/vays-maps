@@ -373,6 +373,9 @@ fun kindColor(k: PlaceKind): Color = when (k) {
     PlaceKind.HOTEL -> Color(0xFFDC9BD2)
     PlaceKind.WORSHIP -> Color(0xFFD2BA7C)
     PlaceKind.EDUCATION -> Color(0xFFC7A97B)
+    PlaceKind.SALON -> Color(0xFFDC9BD2)
+    PlaceKind.GARAGE -> Color(0xFF9FB4C4)
+    PlaceKind.GYM -> Color(0xFF8FC7A0)
     PlaceKind.RAIL, PlaceKind.METRO, PlaceKind.METRO_GATE, PlaceKind.BUS, PlaceKind.AIRPORT -> Color(0xFFA9C7E8)
     else -> Color(0xFFA7AFA0)
 }
@@ -478,7 +481,7 @@ fun DrawScope.drawOverlay(
     route: RouteXY? = null, done: Float = 0f, upTo: Float = Float.MAX_VALUE,
     markers: List<MapMarker> = emptyList(), me: MeDot? = null,
     labels: Boolean = true, riding: Boolean = false, picked: Offset? = null, hits: ArrayList<MapHit>? = null,
-    routeDots: List<Offset> = emptyList(), routeScale: Float = 1f, focus: List<MapPoi> = emptyList(),
+    routeDots: List<Offset> = emptyList(), routeScale: Float = 1f, focus: List<MapPoi> = emptyList(), places: List<MapPoi>? = null,
 ) {
     val s = cam.scale
     // A nonsense camera must draw nothing rather than walk an endless grid.
@@ -501,7 +504,7 @@ fun DrawScope.drawOverlay(
     hits?.clear()
     if (labels) {
         val cells = if (z >= 0.03f) cellsIn(scene.sets(z), x0, y0, x1, y1) else emptyList()
-        drawLabels(scene, cam, ink, on, cells, z, riding, route != null, markers, hits, focus, ::inBox)
+        drawLabels(scene, cam, ink, on, cells, z, riding, route != null, markers, hits, focus, places, ::inBox)
     }
     me?.let { drawMe(cam.toScreen(it.x, it.y), it, s, d, cam.rot) }
     picked?.let { p ->
@@ -566,7 +569,7 @@ private fun DrawScope.drawRoute(r: RouteXY, cam: MapCamera, d: Float, done: Floa
 
 private fun DrawScope.drawLabels(
     scene: Scene, cam: MapCamera, ink: MapInk, on: MapLayersOn, cells: List<MapCell>, z: Float, riding: Boolean, trip: Boolean,
-    markers: List<MapMarker>, hits: ArrayList<MapHit>?, focus: List<MapPoi>, inBox: (Float, Float, Float) -> Boolean,
+    markers: List<MapMarker>, hits: ArrayList<MapHit>?, focus: List<MapPoi>, places: List<MapPoi>?, inBox: (Float, Float, Float) -> Boolean,
 ) {
     val d = ink.density
     val nc = drawContext.canvas.nativeCanvas
@@ -641,19 +644,21 @@ private fun DrawScope.drawLabels(
     // Places, most important first.
     if (on.places) {
         val cand = ArrayList<MapPoi>()
-        scene.city?.places?.forEach { if (z in 0.035f..0.3f && inBox(it.x, it.y, 0f)) cand.add(it) }
-        for (c in cells) for (q in c.pois) {
-            val need = when (q.poi.kind) {
-                PlaceKind.METRO_GATE -> 1.0f
-                else -> when (q.poi.rank) { 0 -> 0.035f; 1 -> 0.14f; 2 -> 0.32f; else -> 0.7f }
+        val from = z
+        // The full place file when it's ready (already best first); the map's own few until then.
+        if (places != null) {
+            for (q in places) if (com.shivansh.raasta.maxRankAt(from) >= q.poi.rank && inBox(q.x, q.y, 0f) && !(riding && (q.poi.rank > 2 || q.poi.kind !in RIDE_KINDS))) cand.add(q)
+        } else {
+            scene.city?.places?.forEach { if (z in 0.035f..0.3f && inBox(it.x, it.y, 0f)) cand.add(it) }
+            for (c in cells) for (q in c.pois) {
+                if (com.shivansh.raasta.maxRankAt(from) < q.poi.rank || q.poi.kind == PlaceKind.METRO_GATE && z < 1f) continue
+                if (riding && (q.poi.rank > 2 || q.poi.kind !in RIDE_KINDS)) continue
+                if (inBox(q.x, q.y, 0f)) cand.add(q)
             }
-            if (z < need) continue
-            if (riding && (q.poi.rank > 2 || q.poi.kind !in RIDE_KINDS)) continue
-            if (inBox(q.x, q.y, 0f)) cand.add(q)
         }
-        cand.sortWith(compareBy({ it.poi.rank }, { it.poi.kind == PlaceKind.PARK }, { it.poi.name.length }, { it.poi.name }))
+        cand.sortWith(compareBy({ it.poi.rank }, { it.poi.kind == PlaceKind.PARK }))
         var placed = 0
-        val maxPlaced = if (riding) 14 else 70
+        val maxPlaced = if (riding) 14 else 60
         for (q in cand) {
             if (placed >= maxPlaced) break
             val p = cam.toScreen(q.x, q.y)
@@ -661,6 +666,13 @@ private fun DrawScope.drawLabels(
             val r = (if (z < 0.12f) 7f else 9f) * d
             val dot = RectF(p.x - r, p.y - r, p.x + r, p.y + r)
             if (!free(dot)) continue
+            val name = if (q.poi.name.length > 24) q.poi.name.take(23).trimEnd() + "…" else q.poi.name
+            val paint = ink.poi(q.poi.kind)
+            val tw = ink.width(paint, name)
+            val box = RectF(p.x - tw / 2 - 2 * d, p.y + r + 1 * d, p.x + tw / 2 + 2 * d, p.y + r + 14 * d)
+            val fits = free(box)
+            // Ordinary shops only with their name: rows of bare dots say nothing.
+            if (!fits && q.poi.rank >= 3) continue
             taken.add(dot); placed++
             val color = kindColor(q.poi.kind)
             drawCircle(MapC.casing, r + 1f * d, p)
@@ -670,11 +682,7 @@ private fun DrawScope.drawLabels(
                 translate(p.x - sz / 2, p.y - sz / 2) { with(icon) { draw(Size(sz, sz), colorFilter = ColorFilter.tint(color)) } }
             }
             hits?.add(MapHit(RectF(p.x - 17 * d, p.y - 17 * d, p.x + 17 * d, p.y + 17 * d), q.poi, null))
-            val name = if (q.poi.name.length > 26) q.poi.name.take(25).trimEnd() + "…" else q.poi.name
-            val paint = ink.poi(q.poi.kind)
-            val tw = ink.width(paint, name)
-            val box = RectF(p.x - tw / 2 - 2 * d, p.y + r + 1 * d, p.x + tw / 2 + 2 * d, p.y + r + 14 * d)
-            if (free(box)) { text(paint, name, p.x, p.y + r + 11.5f * d); taken.add(box) }
+            if (fits) { text(paint, name, p.x, p.y + r + 11.5f * d); taken.add(box) }
         }
     }
 

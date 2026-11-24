@@ -187,7 +187,15 @@ class SavedPlaces(context: Context) {
         sp.edit().putString("recents", JSONArray(list.map { write(it) }).toString()).apply()
     }
 
-    private fun write(p: Place) = JSONObject().put("n", p.name).put("d", p.detail).put("a", p.lat).put("o", p.lon).put("k", p.kind.name)
+    /** Places the rider added themself. */
+    fun mine(): List<Place> = runCatching {
+        val a = JSONArray(sp.getString("mine", "[]"))
+        List(a.length()) { read(a.getJSONObject(it)) }
+    }.getOrDefault(emptyList())
+
+    fun setMine(l: List<Place>) = sp.edit().putString("mine", JSONArray(l.map { write(it) }).toString()).apply()
+
+    private fun write(p: Place) = JSONObject().put("n", p.name).put("d", p.detail).put("a", p.lat).put("o", p.lon).put("k", p.kind.name).put("l", p.label)
     private fun read(o: JSONObject) = Place(o.getString("n"), o.optString("d"), o.getDouble("a"), o.getDouble("o"),
-        PlaceKind.entries.firstOrNull { it.name == o.optString("k") } ?: PlaceKind.OTHER)
+        PlaceKind.entries.firstOrNull { it.name == o.optString("k") } ?: PlaceKind.OTHER, o.optString("l"))
 }

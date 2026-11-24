@@ -113,9 +113,15 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
   </tr>
   <tr>
     <td valign="top">
+      <h4>Finds the small places too</h4>
+      216,000 shops, restaurants, chemists, garages, colonies and roads, inside the app and searchable offline. Spelling is forgiven (Shree/Sri/Shri, Qutub/Qutab), "puncture shop" or "chemist near me" gives the nearest, and "dosa corner paschim vihar" looks in Paschim Vihar. Missing one? Tap the spot and add it.
+    </td>
+    <td valign="top">
       <h4>Knows where you really are</h4>
       GPS plus network location, with the address, accuracy and age of the fix on screen, so you can confirm it before you ride. Off the mark? Tap the right spot and choose "Start here". Offline it still says "DTC Colony, at Shadipur metro".
     </td>
+  </tr>
+  <tr>
     <td valign="top">
       <h4>Works with the screen off</h4>
       Voice and GPS carry on in your pocket, with the next turn on the lock screen. Pinch to zoom while it follows you; drag to look around and it comes back by itself.
@@ -139,7 +145,8 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 * **Guidance** (`core/Guidance.kt`, `core/Phrases.kt`): at every split, count the look-alike roads a rider will see (2–4, left to right, driveways ignored) and pick yours by position. Check each branch for a real flyover (a bridge longer than 100 m, or one named "Flyover") or an underpass within 230 m; short bridges over nallahs and railway lines are ignored. Big circles like Connaught Place get "join the circle"; two quick turns across a median become a U-turn.
 * **Navigator** (`core/Navigator.kt`): snaps GPS to the route, speaks at speed-scaled distances, watches the roads you weren't meant to take for 450 m after each split (that's how "stayed below the flyover" is caught), and re-routes offline with an edge-based A* that knows India drives on the left.
 * **Route matching**: OSRM's JSON rounds long OSM node ids and sometimes uses private lanes the tiles leave out, so routes are aligned to the map by coordinate, with detours and a corridor fallback.
-* **Search** (`core/Online.kt`): merges two free OpenStreetMap search services (Nominatim and Photon). Words like "metro station" or "restaurant" are read as the kind of place you want, not as part of its name, so results of that kind rank first and each one is labelled.
+* **Place search** (`core/PlaceDb.kt`): a memory-mapped file with a spatial grid and a word index; matches by word, beginning, sound and typo, resolves areas, kinds and initials, ranks by fit, certainty and distance. `tools places` builds it from Overture Maps and OpenStreetMap, throwing out wrong pins and duplicates.
+* **Online search** (`core/Online.kt`): only if you ask for more; merges two free OpenStreetMap search services (Nominatim and Photon). Words like "metro station" or "restaurant" are read as the kind of place you want, not as part of its name, so results of that kind rank first and each one is labelled.
 * **Tiles** (`tools/`): a small dependency-free PBF reader cuts Delhi out of the Geofabrik northern-India extract into ~1.1 km gzip'd JSON tiles.
 * **App** (`app/`): Jetpack Compose, a custom map engine (ground painted into cached tiles on background threads; labels, route and markers drawn live on top; gentle 3D tilt), Lucide icons, Inter type, iOS-style transitions.
 
@@ -164,7 +171,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 Needs JDK 17 and the Android SDK.
 
 ```powershell
-.\gradlew :core:test                 # 20 engine and map tests on real Delhi data
+.\gradlew :core:test                 # 31 engine, map and search tests on real Delhi data
 .\gradlew :app:assembleRelease       # app/build/outputs/apk/release/app-release.apk
 .\gradlew :tools:installDist         # tools/build/install/tools/bin/tools
 ```
@@ -176,6 +183,11 @@ Needs JDK 17 and the Android SDK.
 # Refresh the Delhi tiles (northern India extract from Geofabrik, ~225 MB)
 curl.exe -L -o data-src/northern-zone.osm.pbf https://download.geofabrik.de/asia/india/northern-zone-latest.osm.pbf
 tools\build\install\tools\bin\tools tiles data-src\northern-zone.osm.pbf data
+
+# Refresh the places (needs Python with pyarrow)
+python tools/places/overture.py data-src/overture.tsv.gz
+tools\build\install\tools\bin\tools places data-src\northern-zone.osm.pbf data-src\overture.tsv.gz
+tools\build\install\tools\bin\tools find --at 28.668,77.100 "durga dosa corner"
 
 # Build a ride from the tiles and print everything it will say
 tools\build\install\tools\bin\tools build 28.5672,77.2100 28.5918,77.1615 testdata\aiims-dhaulakuan.rpk AIIMS "Dhaula Kuan"
@@ -199,7 +211,8 @@ Set `RAASTA_TILES` to a folder or URL to build from other tiles (default: `data/
 - [x] Search that understands "Shadipur metro station", "restaurant in Connaught Place", "petrol pump Karol Bagh"
 - [x] Live location with address, metro lines and stations, zoom-level map detail, nearby search, Home / Work
 - [x] Rides with the screen off (foreground service)
-- [x] 20 tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
+- [x] 216,000 places offline, forgiving search, add a missing place
+- [x] 31 tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
 - [ ] Road-tested on a real phone
 - [ ] Hindi phrasebook
 - [ ] Turn restrictions when re-routing offline
@@ -211,6 +224,7 @@ Set `RAASTA_TILES` to a folder or URL to build from other tiles (default: `data/
 
 * Code: [MIT](LICENSE).
 * Road tiles in `data/`: derived from OpenStreetMap, © OpenStreetMap contributors, [ODbL 1.0](data/README.md).
+* Places: Overture Maps Foundation (CDLA-Permissive-2.0, Apache-2.0, CC0) and OpenStreetMap (ODbL), see [data/README.md](data/README.md).
 * Inter font: [SIL Open Font License 1.1](LICENSES/Inter-OFL.txt). Icons: [Lucide](https://lucide.dev) (ISC).
 
 <p align="center"><br><img src="docs/art/logo.svg" width="56" alt="Vays Maps logo"><br><sub>Made for Delhi's riders.</sub></p>

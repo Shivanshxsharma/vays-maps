@@ -57,6 +57,7 @@ enum class PlaceKind(val label: String) {
     FOOD("Restaurant"), CAFE("Café"), FUEL("Petrol pump"), HOSPITAL("Hospital"), SHOP("Shop"), MALL("Mall"),
     HOTEL("Hotel"), EDUCATION("School / college"), WORSHIP("Place of worship"), PARK("Park"),
     MARKET("Market"), BANK("Bank / ATM"), PHARMACY("Pharmacy"), POLICE("Police"), CINEMA("Cinema"),
+    SALON("Salon"), GYM("Gym"), GARAGE("Garage"), OFFICE("Office"),
     LANDMARK("Landmark"), AREA("Area"), ROAD("Road"), OTHER("Place");
 
     companion object {
@@ -105,7 +106,12 @@ enum class PlaceKind(val label: String) {
     }
 }
 
-data class Place(val name: String, val detail: String, val lat: Double, val lon: Double, val kind: PlaceKind = PlaceKind.OTHER) {
+data class Place(
+    val name: String, val detail: String, val lat: Double, val lon: Double, val kind: PlaceKind = PlaceKind.OTHER,
+    /** What it is, more exactly than [kind]: "Indian restaurant", "Mobile shop". */
+    val label: String = "",
+) {
+    val what get() = label.ifEmpty { if (kind == PlaceKind.OTHER) "" else kind.label }
     val latLon get() = LatLon(lat, lon)
 }
 

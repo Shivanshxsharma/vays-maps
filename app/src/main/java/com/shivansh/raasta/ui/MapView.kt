@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.State
 import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,6 +74,11 @@ import com.shivansh.raasta.LoadedPack
 import com.shivansh.raasta.core.Kind
 import com.shivansh.raasta.core.Maneuver
 import com.shivansh.raasta.core.NavState
+import com.shivansh.raasta.core.PlaceDb
+import com.shivansh.raasta.core.Poi
+import com.shivansh.raasta.forMap
+import com.shivansh.raasta.maxRankAt
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.shivansh.raasta.core.Path as RoutePath
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -119,6 +125,34 @@ fun LoadTiles(cam: MapCamera, tiles: LiveTiles, network: Boolean) {
     }
 }
 
+/** The places to draw for the current view, looked up off the UI thread a little ahead of where you're looking. */
+@Composable
+fun rememberPlaces(cam: MapCamera, db: PlaceDb?, mine: List<com.shivansh.raasta.core.Place>): State<List<MapPoi>?> {
+    val density = LocalDensity.current.density
+    // Read only while drawing: a new list repaints the labels and recomposes nothing.
+    val list = remember { mutableStateOf<List<MapPoi>?>(null) }
+    val own = remember(mine) { mine.map { MapPoi(Poi(it.name, it.kind, it.lat, it.lon, 0)) } }
+    LaunchedEffect(cam, db, own) {
+        if (db == null) { list.value = null; return@LaunchedEffect }
+        snapshotFlow {
+            val s = cam.scale
+            val rank = maxRankAt(s / density)
+            // Snap to a grid a third of the view wide: only look again after moving that far.
+            val w = cam.size.width / s; val h = cam.size.height / s
+            val r = if (cam.rot == 0f) 0f else maxOf(w, h) * 0.6f
+            val step = maxOf(w / 3, 20f)
+            Triple(rank, listOf(kotlin.math.floor(cam.cx / step), kotlin.math.floor(cam.cy / step), kotlin.math.round(kotlin.math.log2(step) * 3)), floatArrayOf(w, h, r, step).toList())
+        }.distinctUntilChanged { a, b -> a.first == b.first && a.second == b.second }.collectLatest { (rank, cell, v) ->
+            val (w, h, r, step) = v
+            val cx = (cell[0] + 0.5f) * step; val cy = (cell[1] + 0.5f) * step
+            val rx = maxOf(w / 2, r) + step; val ry = maxOf(h / 2, r) + step
+            val a = World.latLon(cx - rx, cy + ry); val b = World.latLon(cx + rx, cy - ry)
+            list.value = own + withContext(Dispatchers.Default) { db.forMap(a.lat, a.lon, b.lat, b.lon, rank).map { MapPoi(it) } }
+        }
+    }
+    return list
+}
+
 /** The interactive map used for planning and previewing. */
 @Composable
 fun LiveMap(
@@ -126,6 +160,7 @@ fun LiveMap(
     extra: CellSet? = null, on: MapLayersOn = MapLayersOn(), network: Boolean = true,
     route: RoutePath? = null, maneuvers: List<Maneuver> = emptyList(),
     markers: List<MapMarker> = emptyList(), me: MeDot? = null, picked: Offset? = null, focus: List<MapPoi> = emptyList(),
+    places: State<List<MapPoi>?>? = null,
     onTap: (MapHit?, Offset) -> Unit = { _, _ -> }, onLongPress: (Offset) -> Unit = {}, onUserMove: () -> Unit = {},
 ) {
     val cam = state.cam
@@ -173,7 +208,7 @@ fun LiveMap(
         drawOverlay(
             scene, cam, ink, on, route = line, upTo = if (t >= 1f) Float.MAX_VALUE else (line?.length ?: 0f) * t, markers = markers,
             me = me?.let { MeDot(mx.value, my.value, it.accuracyM, it.bearing, it.stale) },
-            picked = picked, hits = hits, routeDots = if (t >= 1f) dots else emptyList(), focus = focus,
+            picked = picked, hits = hits, routeDots = if (t >= 1f) dots else emptyList(), focus = focus, places = places?.value,
         )
     }
 }
@@ -254,7 +289,7 @@ fun MiniMap(lp: LoadedPack, city: CityScene?, path: RoutePath, modifier: Modifie
 
 /** A still map of where you are, for the home screen. */
 @Composable
-fun HereMap(city: CityScene?, tiles: LiveTiles, me: MeDot, modifier: Modifier = Modifier) {
+fun HereMap(city: CityScene?, tiles: LiveTiles, db: PlaceDb?, me: MeDot, modifier: Modifier = Modifier) {
     val ink = rememberMapInk()
     val density = LocalDensity.current.density
     val cam = remember { MapCamera(me.x, me.y, 0.16f * density).also { it.anchorY = 0.32f } }
@@ -263,11 +298,12 @@ fun HereMap(city: CityScene?, tiles: LiveTiles, me: MeDot, modifier: Modifier = 
     val scene = remember(city, tiles.sets) { Scene(city, null, tiles.sets) }
     val raster = rememberRaster()
     LoadTiles(cam, tiles, true)
+    val places = rememberPlaces(cam, db, emptyList())
     LaunchedEffect(cam) { snapshotFlow { x to y }.collectLatest { (a, b) -> cam.cx = a; cam.cy = b } }
     Canvas(modifier.clipToBounds().background(MapC.land).onSizeChanged { cam.size = Size(it.width.toFloat(), it.height.toFloat()) }) {
         raster.update(scene, GroundStyle())
         raster.draw(this, cam, 1f)
-        drawOverlay(scene, cam, ink, MapLayersOn(), me = MeDot(x, y, me.accuracyM, me.bearing, me.stale))
+        drawOverlay(scene, cam, ink, MapLayersOn(), me = MeDot(x, y, me.accuracyM, me.bearing, me.stale), places = places.value)
     }
 }
 
@@ -277,7 +313,7 @@ fun HereMap(city: CityScene?, tiles: LiveTiles, me: MeDot, modifier: Modifier = 
  * by itself after a few seconds (or tap Re-centre).
  */
 @Composable
-fun DriveMap(lp: LoadedPack, city: CityScene?, tiles: LiveTiles, on: MapLayersOn, state: NavState, modifier: Modifier = Modifier, markers: List<MapMarker>, recentreBottom: Dp) {
+fun DriveMap(lp: LoadedPack, city: CityScene?, tiles: LiveTiles, db: PlaceDb?, on: MapLayersOn, state: NavState, modifier: Modifier = Modifier, markers: List<MapMarker>, recentreBottom: Dp) {
     val path = state.path
     val line = remember(state.pathVersion) { routeXY(path) }
     val raster = rememberRaster()
@@ -338,6 +374,7 @@ fun DriveMap(lp: LoadedPack, city: CityScene?, tiles: LiveTiles, on: MapLayersOn
         }
     }
     LoadTiles(cam, tiles, network = false)
+    val places = rememberPlaces(cam, db, emptyList())
     val scene = remember(lp, city, tiles.sets) { Scene(city, lp.cells, tiles.sets) }
     Box(
         modifier.clipToBounds().background(MapC.land)
@@ -364,7 +401,7 @@ fun DriveMap(lp: LoadedPack, city: CityScene?, tiles: LiveTiles, on: MapLayersOn
         ) {
             raster.update(scene, GroundStyle(metro = on.metro, metroAlpha = 0.5f, metroMaxDp = 2.6f))
             raster.draw(this, cam, 1f + 0.7f * tilt)
-            drawOverlay(scene, cam, ink, on, route = line, done = ap.value, markers = markers, riding = tilt > 0.02f)
+            drawOverlay(scene, cam, ink, on, route = line, done = ap.value, markers = markers, riding = tilt > 0.02f, places = places.value)
         }
         // You: navigation arrow on a white disc, at the tilt pivot, so it stays put while the map moves under it.
         Canvas(Modifier.fillMaxSize()) {

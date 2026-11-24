@@ -68,6 +68,10 @@ import com.composables.icons.lucide.Briefcase
 import com.composables.icons.lucide.History
 import com.shivansh.raasta.LocState
 import com.composables.icons.lucide.Store
+import com.composables.icons.lucide.Scissors
+import com.composables.icons.lucide.Dumbbell
+import com.composables.icons.lucide.Wrench
+import com.composables.icons.lucide.Building
 import com.composables.icons.lucide.Banknote
 import com.composables.icons.lucide.Pill
 import com.composables.icons.lucide.Shield
@@ -138,7 +142,7 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
             ) {
                 Icon(Lucide.Search, null, tint = C.secondary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Places, metro stations, restaurants…", style = T.body.copy(color = C.secondary))
+                Text("Any shop, restaurant, metro, address…", style = T.body.copy(color = C.secondary))
             }
             val go = buildList {
                 vm.home?.let { add(Triple(Lucide.House, "Home", it)) }
@@ -181,6 +185,7 @@ private fun HomeScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                 }
             }
         }
+        item { Text("Map © OpenStreetMap contributors · Places © Overture Maps Foundation", style = T.caption.copy(color = C.tertiary), modifier = Modifier.padding(top = 22.dp)) }
         vm.error?.let { e -> item { Text(e, style = T.footnote.copy(color = C.red), modifier = Modifier.padding(top = 16.dp)) } }
     }
 }
@@ -196,7 +201,7 @@ private fun HereStrip(vm: AppModel, requestLocation: (() -> Unit) -> Unit, modif
             .pressable({ if (vm.loc == LocState.NO_PERMISSION) requestLocation { vm.startLive() } else vm.plan() }),
     ) {
         val me = meDot(here, now)
-        if (me != null && vm.inDelhi) HereMap(vm.city, vm.tiles, me, Modifier.fillMaxSize())
+        if (me != null && vm.inDelhi) HereMap(vm.city, vm.tiles, vm.places, me, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.3f to Color.Transparent, 0.56f to Color(0xE6101010), 1f to Color(0xFF101010))))
         Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
             val (title, sub) = when {
@@ -336,6 +341,10 @@ fun iconFor(k: PlaceKind) = when (k) {
     PlaceKind.PHARMACY -> Lucide.Pill
     PlaceKind.POLICE -> Lucide.Shield
     PlaceKind.CINEMA -> Lucide.Clapperboard
+    PlaceKind.SALON -> Lucide.Scissors
+    PlaceKind.GYM -> Lucide.Dumbbell
+    PlaceKind.GARAGE -> Lucide.Wrench
+    PlaceKind.OFFICE -> Lucide.Building
     PlaceKind.OTHER -> Lucide.MapPin
 }
 

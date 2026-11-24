@@ -35,7 +35,7 @@ class Here(val fix: Fix, val at: Long) {
 enum class LocState { NO_PERMISSION, SWITCHED_OFF, SEARCHING, OK }
 
 /** A point chosen on the map, with what's known about it. */
-class Picked(val place: Place, val exact: Boolean)
+class Picked(val place: Place, val exact: Boolean, /** A bare spot on the map, nothing known there. */ val bare: Boolean = false)
 
 /** A loaded pack plus its graph and the guidance for each route. */
 class LoadedPack(val file: File, val pack: RoutePack) {
@@ -103,6 +103,43 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         private set
     var layersOn by mutableStateOf(com.shivansh.raasta.ui.MapLayersOn())
 
+    // ---- places ----
+    /** Every place in Delhi, offline. Null for the first moment after launch. */
+    var places by mutableStateOf<PlaceDb?>(null)
+        private set
+    var myPlaces by mutableStateOf(saved.mine())
+        private set
+
+    /** Where the "add a place" sheet is adding, while it's open. */
+    var adding by mutableStateOf<LatLon?>(null)
+
+    /** What we know about something tapped on the map. */
+    fun known(p: Poi): Place {
+        myPlaces.firstOrNull { it.name == p.name && Geo.dist(it.lat, it.lon, p.lat, p.lon) < 5 }?.let { return it }
+        val db = places ?: return p.asPlace()
+        var best = -1
+        db.inBox(p.lat - 2e-5, p.lon - 2e-5, p.lat + 2e-5, p.lon + 2e-5, 9) { if (best < 0 && db.name(it) == p.name) best = it }
+        return if (best >= 0) db.place(best) else p.asPlace()
+    }
+
+    fun isMine(p: Place) = myPlaces.any { it.name == p.name && Geo.dist(it.latLon, p.latLon) < 5 }
+
+    fun addPlace(name: String, kind: PlaceKind, at: LatLon) {
+        val p = Place(name.trim().take(60), city?.map?.areaNear(at.lat, at.lon).orEmpty(), at.lat, at.lon, kind, "Added by you")
+        myPlaces = listOf(p) + myPlaces
+        saved.setMine(myPlaces)
+        picked = Picked(p, true)
+    }
+
+    fun removePlace(p: Place) {
+        myPlaces = myPlaces.filterNot { it.name == p.name && Geo.dist(it.latLon, p.latLon) < 5 }
+        saved.setMine(myPlaces)
+        picked = null
+    }
+
+    /** Where a place without an address is, in words. */
+    fun whereabouts(p: Place): String = p.detail.ifBlank { if (p.kind == PlaceKind.AREA) "" else city?.map?.areaNear(p.lat, p.lon).orEmpty() }
+
     // ---- where you are ----
     var here by mutableStateOf<Here?>(null)
         private set
@@ -132,6 +169,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             }
             here?.let { describeHere(it) }
         }
+        viewModelScope.launch { places = withContext(Dispatchers.IO) { PlaceFile.open(app) } }
     }
 
     /** Live location while the app is on screen. */
@@ -195,10 +233,10 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         pickJob?.cancel()
         if (!Delhi.contains(p)) { error = "That's outside Delhi. This app only knows Delhi's roads."; return }
         val rough = city?.map?.describe(p.lat, p.lon) ?: "Point on map"
-        picked = Picked(Place("Dropped pin", rough, p.lat, p.lon), false)
+        picked = Picked(Place("Dropped pin", rough, p.lat, p.lon), false, bare = true)
         pickJob = viewModelScope.launch {
             val r = withContext(Dispatchers.IO) { runCatching { geocoder.reverse(p.lat, p.lon) }.getOrNull() } ?: return@launch
-            picked = Picked(Place(r.name, r.detail.ifBlank { rough }, p.lat, p.lon), true)
+            picked = Picked(Place(r.name, r.detail.ifBlank { rough }, p.lat, p.lon), true, bare = true)
         }
     }
 
@@ -216,8 +254,14 @@ class AppModel(app: Application) : AndroidViewModel(app) {
                 nearby = if (kinds == setOf(PlaceKind.METRO)) {
                     city?.map?.stations.orEmpty().map { Poi(it.name, PlaceKind.METRO, it.lat, it.lon, 0) to Geo.dist(around.lat, around.lon, it.lat, it.lon) }
                         .sortedBy { it.second }.take(10)
-                } else tiles.nearby(around.lat, around.lon, kinds)
-                if (nearby.isNullOrEmpty()) { nearby = null; error = "Nothing like that on the map within 2 km." }
+                } else places?.let { db ->
+                    withContext(Dispatchers.Default) {
+                        db.near(around.lat, around.lon, 40, 5000.0) { db.isKind(it, kinds) && db.rank(it) <= 4 && db.confidence(it) > 0.4 }
+                            .map { (i, d) -> Poi(db.name(i), db.kind(i), db.lat(i), db.lon(i), 0) to d }
+                            .distinctBy { it.first.name.lowercase() to (it.second / 150).toInt() }.take(20)
+                    }
+                } ?: tiles.nearby(around.lat, around.lon, kinds)
+                if (nearby.isNullOrEmpty()) { nearby = null; error = "Nothing like that on the map within 5 km." }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -279,36 +323,51 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Instant suggestions as you type, all from the phone. */
+    private var suggestJob: Job? = null
+
+    private fun myMatches(q: String): List<Place> {
+        val t = PlaceText.tokens(q)
+        fun fits(p: Place) = PlaceText.tokens(p.name).let { w -> t.all { x -> w.any { it.startsWith(x) } } }
+        return listOfNotNull(home?.copy(name = "Home"), work?.copy(name = "Work")).filter(::fits) + myPlaces.filter(::fits) + recents.filter(::fits).take(3)
+    }
+
+    private fun offline(q: String, limit: Int, typing: Boolean): List<Place> {
+        val found = places?.search(q, here?.takeIf { inDelhi }?.latLon, limit, typing)?.map { it.place } ?: city?.map?.suggest(q).orEmpty()
+        return (myMatches(q) + found).distinctBy { it.name.lowercase() to (it.lat * 700).toInt() }
+    }
+
+    /** Suggestions as you type, all from the phone. */
     fun suggest(query: String) {
-        results = if (query.isBlank()) emptyList() else {
-            val q = query.trim().lowercase()
-            val mine = listOfNotNull(home?.copy(name = "Home"), work?.copy(name = "Work")).filter { it.name.lowercase().startsWith(q) } +
-                recents.filter { p -> p.name.lowercase().split(' ').any { it.startsWith(q) } }.take(3)
-            (mine + city?.map?.suggest(query).orEmpty()).distinctBy { it.name.lowercase() to (it.lat * 500).toInt() }.take(8)
-        }
+        suggestJob?.cancel()
         searchedOnline = false
         error = null
+        if (query.isBlank()) { results = emptyList(); return }
+        suggestJob = viewModelScope.launch {
+            delay(40)
+            val r = withContext(Dispatchers.Default) { offline(query, 16, true) }
+            results = r
+        }
     }
 
     var searchedOnline by mutableStateOf(false)
         private set
 
+    /** Everything on the phone plus the two online search services, best first. */
     fun search(query: String) {
         if (query.isBlank()) return
+        suggestJob?.cancel()
         searching = true
         error = null
-        val local = city?.map?.suggest(query, 3).orEmpty()
         viewModelScope.launch {
+            val local = withContext(Dispatchers.Default) { offline(query, 20, false) }
+            results = local
             try {
                 val found = withContext(Dispatchers.IO) { geocoder.search(query.trim()) }
-                // Keep offline matches the online search missed (same spot = same place).
-                val extra = local.filter { l -> found.none { Geo.dist(it.latLon, l.latLon) < 250 && it.kind == l.kind } }
-                results = found + extra
-                if (results.isEmpty()) error = "Nothing found in Delhi for “${query.trim()}”. Try a nearby metro station, or hold on the map."
+                val extra = found.filter { f -> local.none { Geo.dist(it.latLon, f.latLon) < 120 && PlaceText.tokens(it.name).firstOrNull() == PlaceText.tokens(f.name).firstOrNull() } }
+                results = local + extra
+                if (results.isEmpty()) error = "Nothing found for “${query.trim()}”. Find the spot on the map, tap it, and add it yourself."
             } catch (e: Exception) {
-                results = local
-                error = if (local.isEmpty()) "Searching needs internet. You can still pick a spot on the map." else "Offline: showing metro stations and areas only."
+                if (local.isEmpty()) error = "Not in the offline list, and there's no internet to look further. You can still pick the spot on the map."
             } finally {
                 searching = false
                 searchedOnline = true

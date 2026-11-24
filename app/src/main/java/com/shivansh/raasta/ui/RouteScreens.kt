@@ -113,7 +113,7 @@ fun PackScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
     Box(Modifier.fillMaxSize()) {
         LiveMap(
             state, vm.city, vm.tiles, Modifier.fillMaxSize(), extra = lp.cells, on = vm.layersOn, route = path, maneuvers = ms,
-            markers = markers, me = meDot(vm.here, now),
+            markers = markers, me = meDot(vm.here, now), places = rememberPlaces(state.cam, vm.places, vm.myPlaces),
         )
         TopScrim()
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -243,7 +243,7 @@ fun NavScreen(vm: AppModel) {
     Box(Modifier.fillMaxSize()) {
         val end = lp.pack.meta.to
         val dest = remember(lp) { listOf(MapMarker(World.x(end.lon), World.y(end.lat), true, lp.pack.meta.toName)) }
-        DriveMap(lp, vm.city, vm.tiles, vm.layersOn, s, Modifier.fillMaxSize(), dest, recentreBottom = 250.dp)
+        DriveMap(lp, vm.city, vm.tiles, vm.places, vm.layersOn, s, Modifier.fillMaxSize(), dest, recentreBottom = 250.dp)
         ManeuverBanner(s, vm, Modifier.align(Alignment.TopCenter))
         Column(Modifier.align(Alignment.BottomCenter)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.Bottom) {

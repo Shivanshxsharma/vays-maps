@@ -28,8 +28,24 @@ fun main(args: Array<String>) {
         "sim" -> sim(PackIO.read(File(args[1])), args.getOrNull(2)?.toInt() ?: 0)
         "diag" -> diag(ll(args[1]), ll(args[2]))
         "search" -> Geocoder(Http()).search(args.drop(1).joinToString(" ")).forEach { println("%-16s %s  (%s)".format(it.kind.label, it.name, it.detail)) }
+        "places" -> TileCutter.run(File(args[1]), File("data"), overture = File(args[2]))
+        "find" -> find(args)
         "tiles" -> TileCutter.run(File(args[1]), File(args[2]))
         else -> println("usage: build|show|render|sim … (see Cli.kt)")
+    }
+}
+
+/** find [--at lat,lon] words…   search the offline place file, as the app does */
+private fun find(args: Array<String>) {
+    val db = java.io.RandomAccessFile("app/src/main/assets/places.db", "r").channel.use { PlaceDb(it.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, it.size())) }
+    var rest = args.drop(1)
+    var at: LatLon? = null
+    if (rest.firstOrNull() == "--at") { at = ll(rest[1]); rest = rest.drop(2) }
+    for (q in rest.joinToString(" ").split(" / ")) {
+        val t0 = System.nanoTime()
+        val r = db.search(q, at, 6, typing = false)
+        println("== $q   (${(System.nanoTime() - t0) / 1_000_000} ms)")
+        for (h in r) println("   %.2f %-18s %s  (%s)%s".format(h.score, db.cat(h.id).label, h.place.name, h.place.detail, if (h.distance.isNaN()) "" else "  " + Phrases.shortDistance(h.distance)))
     }
 }
 

@@ -62,7 +62,7 @@ class CityMap(
             labels.map { l -> e(Place(l.name, "", l.lat, l.lon, PlaceKind.AREA), 2) }
     }
 
-    private fun areaNear(lat: Double, lon: Double): String? =
+    fun areaNear(lat: Double, lon: Double): String? =
         labels.map { it to Geo.dist(lat, lon, it.lat, it.lon) }.filter { it.second < 1800 }.minByOrNull { it.second }?.first?.name
 
     /** Instant, offline suggestions while typing: metro stations, landmarks and areas. Every typed word must match. */

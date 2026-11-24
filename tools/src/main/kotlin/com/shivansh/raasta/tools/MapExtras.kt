@@ -20,6 +20,10 @@ class MapExtras {
     class RelMember(val id: Long, val kind: AreaKind)
 
     val pois = ArrayList<Poi>()
+    /** Everything findable by name, including the small shops the map tiles leave out. */
+    val all = ArrayList<SrcPlace>()
+    /** Named residential pockets, blocks, societies. */
+    val pockets = ArrayList<Pair<String, LatLon>>()
     val labels = ArrayList<Triple<String, Int, LatLon>>()
     val stations = ArrayList<Station>()
     val areas = ArrayList<Area>()
@@ -86,6 +90,7 @@ class MapExtras {
             "suburb" -> labels.add(Triple(name, 1, LatLon(lat, lon)))
             "village", "neighbourhood", "quarter" -> labels.add(Triple(name, 2, LatLon(lat, lon)))
         }
+        findable(t, lat, lon)
         place(t, lat, lon)
     }
 
@@ -94,8 +99,59 @@ class MapExtras {
         if (t.isEmpty() || pts.size < 3) return
         if (closed) areaKind(t)?.let { areas.add(Area(it, pts)) }
         // Big places are mapped as building outlines: use their middle.
-        if (t["highway"] == null) place(t, pts.sumOf { it.lat } / pts.size, pts.sumOf { it.lon } / pts.size)
+        if (t["highway"] == null) {
+            val la = pts.sumOf { it.lat } / pts.size; val lo = pts.sumOf { it.lon } / pts.size
+            findable(t, la, lo)
+            place(t, la, lo)
+        }
     }
+
+    private fun findable(t: Map<String, String>, lat: Double, lon: Double) {
+        if (!Delhi.contains(lat, lon)) return
+        val name = nameOf(t) ?: return
+        if (t["landuse"] == "residential" || t["place"] in setOf("city_block", "plot", "locality", "quarter") || t["building"] in setOf("apartments", "residential")) {
+            pockets.add(name to LatLon(lat, lon))
+            return
+        }
+        val key = listOf("amenity", "shop", "tourism", "historic", "leisure", "office", "healthcare", "craft").firstOrNull { it in t } ?: return
+        if (t["railway"] != null || t["amenity"] in setOf("bench", "parking_space", "waste_basket", "toilets", "drinking_water", "shelter", "vending_machine")) return
+        val v = t.getValue(key)
+        if (v == "yes" && key != "shop") return
+        var kind = PlaceKind.of(key, v, name, t)
+        if (kind == PlaceKind.METRO || kind == PlaceKind.METRO_GATE) return
+        if (key == "shop") kind = when (v) {
+            "mall", "department_store" -> PlaceKind.MALL
+            "car_repair", "motorcycle_repair", "tyres", "car_parts", "motorcycle", "car" -> PlaceKind.GARAGE
+            "hairdresser", "beauty", "massage" -> PlaceKind.SALON
+            "chemist", "medical_supply" -> PlaceKind.PHARMACY
+            "bakery", "confectionery", "pastry", "tea", "coffee" -> PlaceKind.CAFE
+            else -> PlaceKind.SHOP
+        }
+        if (key == "healthcare") kind = PlaceKind.HOSPITAL
+        if (key == "office") kind = PlaceKind.OFFICE
+        if (key == "craft") kind = PlaceKind.SHOP
+        if (v in setOf("fitness_centre", "sports_centre", "gym")) kind = PlaceKind.GYM
+        if (v == "stadium") kind = PlaceKind.LANDMARK
+        val rank = when {
+            "wikidata" in t || "wikipedia" in t -> 1
+            kind == PlaceKind.OFFICE || kind == PlaceKind.OTHER -> 4
+            else -> 3
+        }
+        val addr = listOfNotNull(t["addr:housenumber"], t["addr:street"], t["addr:suburb"] ?: t["addr:neighbourhood"]).joinToString(", ")
+        val label = when {
+            v == "yes" || kind == PlaceKind.METRO -> kind.label
+            key == "shop" && kind == PlaceKind.SHOP -> v.replace('_', ' ').replaceFirstChar { it.uppercase() } + " shop"
+            else -> kind.label
+        }
+        all.add(SrcPlace(name, kind, label, lat, lon, rank, 0.85, addr, true, altOf(t, name)))
+    }
+
+    /** Short and other names; Hindi too, so it can be typed. */
+    private fun altOf(t: Map<String, String>, name: String): String =
+        listOfNotNull(t["short_name"], t["alt_name"], t["old_name"], t["name"], t["name:hi"], t["official_name"])
+            .flatMap { it.split(';') }.map { it.trim() }.filter { it.isNotEmpty() && it != name && it.length <= 50 }.distinct().joinToString(" ").take(120).replace('\t', ' ')
+
+    val alts = HashMap<String, String>()
 
     private fun nameOf(t: Map<String, String>) = (t["name:en"] ?: t["name"])?.trim()?.takeIf { it.isNotEmpty() && it.length <= 60 && READABLE.containsMatchIn(it) && !JUNK.containsMatchIn(it) }
 
@@ -138,6 +194,7 @@ class MapExtras {
         }
         if (famous && rank > 0) rank--
         if (t["tourism"] == "artwork" || t["historic"] == "memorial" && !famous) rank = 3
+        altOf(t, name).let { if (it.isNotEmpty()) alts[name] = it }
         pois.add(Poi(name, kind, lat, lon, rank))
     }
 

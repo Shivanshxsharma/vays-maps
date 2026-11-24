@@ -66,6 +66,7 @@ import com.composables.icons.lucide.LocateFixed
 import com.composables.icons.lucide.LocateOff
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPinned
+import com.composables.icons.lucide.MapPinPlus
 import com.composables.icons.lucide.X
 import com.shivansh.raasta.AppModel
 import com.shivansh.raasta.Here
@@ -197,13 +198,13 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
         LiveMap(
             state, vm.city, vm.tiles, Modifier.fillMaxSize(), on = vm.layersOn, markers = markers, me = me,
             picked = vm.picked?.place?.let { Offset(World.x(it.lon), World.y(it.lat)) },
-            focus = focus,
+            focus = focus, places = rememberPlaces(state.cam, vm.places, vm.myPlaces),
             onTap = { hit, p ->
                 vm.error = null
                 val poi = hit?.poi; val st = hit?.station
                 when {
-                    st != null -> vm.pick(Place(st.name, "Metro station", st.lat, st.lon, PlaceKind.METRO))
-                    poi != null -> vm.pick(Place(poi.name, poi.kind.label, poi.lat, poi.lon, poi.kind))
+                    st != null -> vm.pick(Place(st.name, "", st.lat, st.lon, PlaceKind.METRO))
+                    poi != null -> vm.pick(vm.known(poi))
                     vm.picked != null -> vm.picked = null
                     else -> state.cam.toWorld(p).let { w -> vm.pickPoint(World.latLon(w.x, w.y)) }
                 }
@@ -291,6 +292,7 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
             SearchPanel(vm, last, start ?: here?.latLon, requestLocation,
                 change = { searchFor = it; vm.clearResults() }) { searchFor = null; vm.clearResults() }
         }
+        vm.adding?.let { at -> AddPlace(onDismiss = { vm.adding = null }) { name, kind -> vm.adding = null; vm.addPlace(name, kind, at) } }
         AnimatedVisibility(vm.busy != null, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
             Box(Modifier.fillMaxSize().background(C.bg).blockMap().padding(horizontal = 24.dp)) { DownloadProgress(vm) }
         }
@@ -455,7 +457,7 @@ private fun PickedCard(vm: AppModel, here: Here?) {
         Column(Modifier.weight(1f).padding(start = 14.dp)) {
             Text(p.name, style = T.title3, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val dist = here?.let { "${Phrases.shortDistance(Geo.dist(it.latLon, p.latLon))} away" }
-            Text(listOfNotNull(p.detail.takeIf { it.isNotBlank() }, dist).joinToString(" · "), style = T.footnote, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(listOfNotNull(p.what.takeIf { it.isNotBlank() }, vm.whereabouts(p).takeIf { it.isNotBlank() && !it.equals(p.name, true) }, dist).joinToString(" · "), style = T.footnote, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (p.kind == PlaceKind.METRO) LineDots(vm, p)
         }
         Box(Modifier.size(34.dp).clip(CircleShape).background(C.elevated).pressable({ vm.picked = null }), contentAlignment = Alignment.Center) {
@@ -466,6 +468,20 @@ private fun PickedCard(vm: AppModel, here: Here?) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         LineCapsule("Start here", Modifier.weight(1f), icon = Lucide.Bike, height = 50.dp) { vm.setFrom(p) }
         GlossCapsule("Go here", Modifier.weight(1f), icon = Lucide.Flag, height = 50.dp) { vm.setTo(p) }
+    }
+    if (pick.bare) Row(Modifier.fillMaxWidth().padding(top = 6.dp).height(44.dp).pressable({ vm.adding = p.latLon }), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+        Icon(Lucide.MapPinPlus, null, tint = C.secondary, modifier = Modifier.size(17.dp))
+        Text("  Shop or place missing here? Add it", style = T.footnote.copy(color = C.label))
+    }
+    if (vm.isMine(p)) Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.Center) {
+        val ctx = LocalContext.current
+        Text("Share with everyone", style = T.footnote.copy(color = C.label), modifier = Modifier.pressable({
+            val body = "Name: ${p.name}\nType: ${p.kind.label}\nLocation: %.6f, %.6f\n\nAdded in the app; please include it in the next data update.".format(java.util.Locale.ROOT, p.lat, p.lon)
+            val u = Uri.parse("https://github.com/Shivanshxsharma/vays-maps/issues/new").buildUpon()
+                .appendQueryParameter("title", "Missing place: ${p.name}").appendQueryParameter("body", body).build()
+            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, u)) }
+        }).padding(12.dp))
+        Text("Remove", style = T.footnote.copy(color = C.red), modifier = Modifier.pressable({ vm.removePlace(p) }).padding(12.dp))
     }
 }
 
@@ -482,7 +498,7 @@ private fun NearbyCard(vm: AppModel, title: String, onClose: () -> Unit) {
         items(vm.nearby.orEmpty()) { (poi, d) ->
             Column(
                 Modifier.width(150.dp).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(C.elevated)
-                    .pressable({ vm.pick(Place(poi.name, poi.kind.label, poi.lat, poi.lon, poi.kind)) }).padding(12.dp),
+                    .pressable({ vm.pick(vm.known(poi)) }).padding(12.dp),
             ) {
                 Text(poi.name, style = T.subhead.copy(color = C.label, fontWeight = FontWeight.Medium), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text(Phrases.shortDistance(d), style = T.footnote.copy(color = kindColor(poi.kind)))
@@ -506,6 +522,44 @@ private fun TripCardPlan(vm: AppModel, start: LatLon?, here: Here?, now: Long) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         LineCapsule("Clear", Modifier.weight(0.6f), height = 52.dp) { vm.setTo(null) }
         GlossCapsule("Download ride", Modifier.weight(1.4f), icon = Lucide.Download, enabled = start != null, height = 52.dp) { vm.download() }
+    }
+}
+
+private val ADD_KINDS = listOf(
+    "Food" to PlaceKind.FOOD, "Café" to PlaceKind.CAFE, "Shop" to PlaceKind.SHOP, "Chemist" to PlaceKind.PHARMACY, "Garage" to PlaceKind.GARAGE,
+    "Salon" to PlaceKind.SALON, "Petrol" to PlaceKind.FUEL, "Clinic" to PlaceKind.HOSPITAL, "ATM" to PlaceKind.BANK, "Temple" to PlaceKind.WORSHIP,
+    "School" to PlaceKind.EDUCATION, "Office" to PlaceKind.OFFICE, "Other" to PlaceKind.OTHER,
+)
+
+/** "Name, and what it is": two things are enough for a place to be found again. */
+@Composable
+private fun AddPlace(onDismiss: () -> Unit, onSave: (String, PlaceKind) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(PlaceKind.FOOD) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { delay(120); runCatching { focus.requestFocus() } }
+    BackHandler(onBack = onDismiss)
+    Box(Modifier.fillMaxSize().background(Color(0xB3000000)).pressable(onDismiss), contentAlignment = Alignment.BottomCenter) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(12.dp).panel(RoundedCornerShape(26.dp)).blockMap().padding(20.dp)) {
+            Text("Add a place", style = T.title3)
+            Text("Saved on your phone. It shows on the map and in search.", style = T.footnote)
+            Box(Modifier.padding(top = 14.dp).fillMaxWidth().height(52.dp).clip(RoundedCornerShape(16.dp)).background(C.elevated).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
+                if (name.isEmpty()) Text("Name, e.g. Shree Durga Dosa Corner", style = T.body.copy(color = C.tertiary), maxLines = 1)
+                BasicTextField(name, { name = it.take(60) }, singleLine = true, textStyle = T.body, cursorBrush = SolidColor(C.blue),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Words),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus))
+            }
+            Row(Modifier.padding(top = 12.dp).fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((label, k) in ADD_KINDS) {
+                    val sel = k == kind
+                    Row(Modifier.height(38.dp).clip(CircleShape).background(if (sel) C.label else C.elevated).pressable({ kind = k }).padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(iconFor(k), null, tint = if (sel) C.bg else kindColor(k), modifier = Modifier.size(15.dp))
+                        Text("  $label", style = T.footnote.copy(color = if (sel) C.bg else C.label))
+                    }
+                }
+            }
+            GlossCapsule("Save place", Modifier.padding(top = 16.dp).fillMaxWidth(), enabled = name.trim().length >= 2, height = 50.dp) { onSave(name, kind) }
+        }
     }
 }
 
@@ -571,11 +625,11 @@ private fun SearchPanel(vm: AppModel, what: SearchFor, near: LatLon?, requestLoc
             } else {
                 vm.error?.let { item { Text(it, style = T.footnote.copy(color = C.red), modifier = Modifier.padding(vertical = 10.dp)) } }
                 itemsIndexed(vm.results) { _, p ->
-                    val sub = listOfNotNull(p.kind.takeIf { it != PlaceKind.OTHER }?.label, p.detail.takeIf { it.isNotBlank() }).joinToString(" · ")
+                    val sub = listOf(p.what, vm.whereabouts(p)).filter { it.isNotBlank() && !it.equals(p.name, true) }.joinToString(" · ")
                     Row2(iconFor(p.kind), p.name, sub, dist(near, p), kindColor(p.kind)) { choose(p) }
                 }
                 if (!vm.searchedOnline && !vm.searching) item {
-                    Row2(Lucide.Globe, "Search all of Delhi for “${query.trim()}”", "Shops, restaurants, addresses · needs internet", null) { vm.search(query) }
+                    Row2(Lucide.Globe, if (vm.results.isEmpty()) "Look online for “${query.trim()}”" else "Not here? Look online too", "Exact addresses and newer places", null) { vm.search(query) }
                 }
             }
         }
