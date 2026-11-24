@@ -114,7 +114,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
   <tr>
     <td valign="top">
       <h4>Finds the small places too</h4>
-      216,000 shops, restaurants, chemists, garages, colonies and roads, inside the app and searchable offline. Spelling is forgiven (Shree/Sri/Shri, Qutub/Qutab), "puncture shop" or "chemist near me" gives the nearest, and "dosa corner paschim vihar" looks in Paschim Vihar. Missing one? Tap the spot and add it.
+      272,000 shops, restaurants, chemists, garages, colonies and roads, inside the app and searchable offline. Spelling is forgiven (Shree/Sri/Shri, Qutub/Qutab), "puncture shop" or "chemist near me" gives the nearest, and "dosa corner paschim vihar" looks in Paschim Vihar. Not in there? Find it on Google Maps, tap **Share → Vays Maps**, and ride to it; it is remembered from then on. Pasted links, plus codes and coordinates work too.
     </td>
     <td valign="top">
       <h4>Knows where you really are</h4>
@@ -146,6 +146,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 * **Navigator** (`core/Navigator.kt`): snaps GPS to the route, speaks at speed-scaled distances, watches the roads you weren't meant to take for 450 m after each split (that's how "stayed below the flyover" is caught), and re-routes offline with an edge-based A* that knows India drives on the left.
 * **Route matching**: OSRM's JSON rounds long OSM node ids and sometimes uses private lanes the tiles leave out, so routes are aligned to the map by coordinate, with detours and a corridor fallback.
 * **Place search** (`core/PlaceDb.kt`): a memory-mapped file with a spatial grid and a word index; matches by word, beginning, sound and typo, resolves areas, kinds and initials, ranks by fit, certainty and distance. `tools places` builds it from Overture Maps and OpenStreetMap, throwing out wrong pins and duplicates.
+* **Shared places** (`core/MapLink.kt`): reads the link (one redirect, nothing is fetched from the page), then checks the spot against the place list, the door number and the area in the address before trusting it; when it can't, it says so.
 * **Online search** (`core/Online.kt`): only if you ask for more; merges two free OpenStreetMap search services (Nominatim and Photon). Words like "metro station" or "restaurant" are read as the kind of place you want, not as part of its name, so results of that kind rank first and each one is labelled.
 * **Tiles** (`tools/`): a small dependency-free PBF reader cuts Delhi out of the Geofabrik northern-India extract into ~1.1 km gzip'd JSON tiles.
 * **App** (`app/`): Jetpack Compose, a custom map engine (ground painted into cached tiles on background threads; labels, route and markers drawn live on top; gentle 3D tilt), Lucide icons, Inter type, iOS-style transitions.
@@ -171,7 +172,7 @@ The icon on screen draws every road at the split and fills in yours, so a one-se
 Needs JDK 17 and the Android SDK.
 
 ```powershell
-.\gradlew :core:test                 # 31 engine, map and search tests on real Delhi data
+.\gradlew :core:test                 # 40 engine, map, search and link tests on real Delhi data
 .\gradlew :app:assembleRelease       # app/build/outputs/apk/release/app-release.apk
 .\gradlew :tools:installDist         # tools/build/install/tools/bin/tools
 ```
@@ -211,8 +212,9 @@ Set `RAASTA_TILES` to a folder or URL to build from other tiles (default: `data/
 - [x] Search that understands "Shadipur metro station", "restaurant in Connaught Place", "petrol pump Karol Bagh"
 - [x] Live location with address, metro lines and stations, zoom-level map detail, nearby search, Home / Work
 - [x] Rides with the screen off (foreground service)
-- [x] 216,000 places offline, forgiving search, add a missing place
-- [x] 31 tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
+- [x] 272,000 places offline (56,000 of them unverified, found by search only), forgiving search, add a missing place
+- [x] Share a place from Google Maps, WhatsApp or a browser; plus codes; coordinates
+- [x] 40 tests on real Delhi routes, including "stayed below instead of taking the Raj Nagar Flyover → re-routed → still arrived"
 - [ ] Road-tested on a real phone
 - [ ] Hindi phrasebook
 - [ ] Turn restrictions when re-routing offline

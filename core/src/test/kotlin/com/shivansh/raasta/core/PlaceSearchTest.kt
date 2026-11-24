@@ -54,6 +54,8 @@ class PlaceSearchTest {
         finds("haldiram", "Haldiram", 1.0)
         finds("mc donalds", "McDonald", 2.0)
         finds("dominos", "Domino", 1.0)
+        finds("sandoz restaurant", "Sandoz", 1.5)
+        finds("five star dhaba", "Five Star Dhaba", 1.5)
         finds("haldirams connaught place", "Haldiram", 14.0)
         assertTrue(top("haldirams connaught place").first().distance > 9_000, "the area you typed wins over the one near you")
     }

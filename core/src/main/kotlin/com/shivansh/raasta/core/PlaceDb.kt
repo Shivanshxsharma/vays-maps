@@ -130,7 +130,7 @@ class PlaceDb(private val b: ByteBuffer) {
     fun cat(i: Int): PlaceCat = cats[b.getShort(oCat + 2 * i).toInt() and 0xFFFF]
     private fun catId(i: Int) = b.getShort(oCat + 2 * i).toInt() and 0xFFFF
     fun kind(i: Int) = cat(i).kind
-    /** 0 = city-wide landmark … 3 = ordinary shop … 5 = offices and the like, only found by name. */
+    /** 0 = city-wide landmark … 3 = ordinary shop … 5 = offices and the like, 6 = unverified, 7 = only roughly placed; 6 and 7 are only found by search. */
     fun rank(i: Int) = b.get(oRank + i).toInt()
     /** 0..1: how sure the sources are that this exists, here. */
     fun confidence(i: Int) = (b.get(oConf + i).toInt() and 0xFF) / 255.0
@@ -140,7 +140,8 @@ class PlaceDb(private val b: ByteBuffer) {
     /** Other names it goes by ("AIIMS"), searchable but not shown. */
     fun alt(i: Int) = addrRaw(i).let { if ('\t' in it) it.substringBefore('\t') else "" }
 
-    fun place(i: Int) = Place(name(i), address(i), lat(i), lon(i), kind(i), cat(i).label)
+    fun place(i: Int) = Place(name(i), address(i), lat(i), lon(i), kind(i),
+        cat(i).label + when (rank(i)) { UNVERIFIED -> " · unverified"; APPROXIMATE -> " · rough location"; else -> "" })
 
     private fun str(at: Int, len: Int): String {
         val a = ByteArray(len)
@@ -322,6 +323,25 @@ class PlaceDb(private val b: ByteBuffer) {
         areas.keys.groupBy { k -> k.split(' ').joinToString(" ") { PlaceText.sound(it) } }
     }
 
+    /** Where the areas named in an address are, most specific (first mentioned) first. */
+    fun areasIn(text: String): List<LatLon> {
+        val t = PlaceText.tokens(text)
+        val out = ArrayList<LatLon>()
+        var i = 0
+        while (i < t.size) {
+            var used = 1
+            for (len in min(3, t.size - i) downTo 1) {
+                val a = areas[t.subList(i, i + len).joinToString(" ")] ?: continue
+                if (len == 1 && (t[i].length < 5 || t[i] == "delhi" || t[i] == "noida")) continue
+                a.forEach { out.add(it.place) }
+                used = len
+                break
+            }
+            i += used
+        }
+        return out
+    }
+
     private fun areaFor(words: List<String>): List<Area>? {
         val key = words.joinToString(" ")
         areas[key]?.let { return it }
@@ -411,6 +431,9 @@ class PlaceDb(private val b: ByteBuffer) {
 
         val whole = words.joinToString(" ")
         val flat = words.joinToString("") { it.removeSuffix("s") }
+        // "Sandoz Restaurant" and "Sandoz" are the same place to the person typing.
+        fun bare(l: List<String>) = l.filter { it !in SHOPWORD && it !in CAT_WORDS }.joinToString(" ") { it.removeSuffix("s") }
+        val bareQuery = bare(words.filterIndexed { i, _ -> i !in areaFrom until areaTo })
         val coreWords = words.indices.filter { it !in areaFrom until areaTo }
         // Cheap pass first, then look closely at the most promising ones.
         val ids = (0 until nTouched).map { touched[it] }
@@ -449,9 +472,10 @@ class PlaceDb(private val b: ByteBuffer) {
             else if (full == whole) s += 0.2 * close
             else if (toks.joinToString("") { it.removeSuffix("s") } == flat || alt.isNotEmpty() && alt.joinToString(" ") == whole) s += 0.18 * close
             else if (coreWords.size < words.size && full == coreWords.joinToString(" ") { words[it] }) s += 0.15
+            else if (bareQuery.length >= 3 && bare(toks) == bareQuery) s += 0.16 * close
             else if (full.startsWith(whole)) s += 0.06
             s -= 0.012 * (toks.size - coreWords.size).coerceIn(0, 8)
-            s += 0.10 * confidence(d) + when (rank(d)) { 0 -> 0.16; 1 -> 0.09; 2 -> 0.05; 3 -> 0.03; 4 -> 0.0; else -> -0.06 }
+            s += 0.10 * confidence(d) + when (rank(d)) { 0 -> 0.16; 1 -> 0.09; 2 -> 0.05; 3 -> 0.03; 4 -> 0.0; 5 -> -0.06; UNVERIFIED -> -0.13; else -> -0.2 }
             val dist = if (near != null) Geo.dist(near.lat, near.lon, la, lo) else Double.NaN
             if (anchor != null) {
                 val ad = Geo.dist(anchor.lat, anchor.lon, la, lo)
@@ -552,6 +576,8 @@ class PlaceDb(private val b: ByteBuffer) {
         const val MAGIC = 0x56504C43 // "VPLC"
         const val VERSION = 1
         const val CELL = 0.005
+        const val UNVERIFIED = 6
+        const val APPROXIMATE = 7
         fun key(row: Int, col: Int) = row * 100_000 + col
 
         private val SHREE = setOf("shree", "shri", "sri", "shre", "shrii", "she", "sree")

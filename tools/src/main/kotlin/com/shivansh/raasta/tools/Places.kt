@@ -100,8 +100,16 @@ object OvertureCleaner {
         }
 
         val cleaned = ArrayList<SrcPlace>()
+        /** Not sure enough for the map, but if you type exactly this you probably want it. */
+        val doubtful = ArrayList<SrcPlace>()
+        fun centre(r: Row): LatLon? {
+            val t = PlaceText.tokens(r.address)
+            for (i in t.indices) for (len in minOf(3, t.size - i) downTo 1) areaAt[t.subList(i, i + len).joinToString(" ")]?.let { return it[0] }
+            return pinAt[r.postcode]
+        }
         for (r in rows) {
             var sure = false
+            var why = 0
             val keep = run {
                 val n = r.name
                 if (n.length < 3 || n.length > 70 || !LETTER.containsMatchIn(n) || '_' in n) return@run drop("name")
@@ -111,13 +119,13 @@ object OvertureCleaner {
                 if (r.basic in BAD) return@run drop("category")
                 if (Regex("(?i)metro station").containsMatchIn(n) && r.top == "travel_and_transportation") return@run drop("metro (OSM has it)")
                 val a = agrees(r)
-                if (a < 0) return@run drop("address elsewhere")
+                if (a < 0) { why = 2; return@run drop("address elsewhere") }
                 val s = stack.getValue(spot(r))
                 val addr = r.address.length >= 10
                 sure = a > 0 && addr
                 // Crowded spots: malls and hospitals are fine, city middles are not.
-                if (s >= 60 && !(a > 0 && r.conf >= 0.75)) return@run drop("crowded spot")
-                if (s >= 8 && !(a > 0 && r.conf >= 0.5) && r.conf < 0.8) return@run drop("crowded spot")
+                if (s >= 60 && !(a > 0 && r.conf >= 0.75)) { why = 2; return@run drop("crowded spot") }
+                if (s >= 8 && !(a > 0 && r.conf >= 0.5) && r.conf < 0.8) { why = 2; return@run drop("crowded spot") }
                 val need = when {
                     r.basic.isEmpty() -> 0.6
                     r.basic in OFFICE -> if (addr) 0.55 else 0.75
@@ -127,10 +135,17 @@ object OvertureCleaner {
                     addr -> 0.34
                     else -> 0.48
                 }
-                if (r.conf < need) return@run drop("not sure enough")
+                if (r.conf < need) { why = 1; return@run drop("not sure enough") }
                 true
             }
-            if (!keep) continue
+            if (!keep) {
+                if (why == 0 || r.basic in OFFICE && r.conf < 0.35 || r.basic.isEmpty() && r.conf < 0.4 || r.conf < 0.12 || r.basic == "historic_site") continue
+                // A wrong pin is only worth keeping if the address says which area it's really in.
+                val at = if (why == 2) (if (r.address.length >= 8 && r.conf >= 0.3) centre(r) else null) ?: continue else LatLon(r.lat, r.lon)
+                val k = kindOf(r.top, r.basic, r.primary)
+                doubtful.add(SrcPlace(tidy(r.name), k, label(r.primary.ifEmpty { r.basic }, k), at.lat, at.lon, if (why == 2) 7 else 6, r.conf, address(r.address), false))
+                continue
+            }
             val kind = kindOf(r.top, r.basic, r.primary)
             val rank = when {
                 r.basic in OFFICE || r.basic.isEmpty() || r.basic == "historic_site" -> 5
@@ -209,6 +224,19 @@ object OvertureCleaner {
             out.add(p)
             grid.getOrPut(cell(p.lat, p.lon)) { ArrayList() }.add(p)
         }
+        // Doubtful ones go in last, and only where nothing like them is there already.
+        val firm = HashMap<String, MutableList<SrcPlace>>()
+        for (p in out) firm.getOrPut(sounds(p.name).joinToString(" ")) { ArrayList() }.add(p)
+        var extra = 0
+        for (p in doubtful.sortedByDescending { it.conf }) {
+            val key = sounds(p.name).joinToString(" ")
+            if (key.length < 3 || p.name.length < 3) continue
+            val reach = if (p.rank == 7) 4000.0 else 600.0
+            val l = firm.getOrPut(key) { ArrayList() }
+            if (l.any { Geo.dist(it.lat, it.lon, p.lat, p.lon) < reach }) continue
+            l.add(p); out.add(p); extra++
+        }
+        println("Doubtful places kept for search only: $extra of ${doubtful.size}")
         println("Places: ${out.size} after merging with ${osm.size} from OSM ($dups duplicates)")
         return out
     }

@@ -35,7 +35,7 @@ class Here(val fix: Fix, val at: Long) {
 enum class LocState { NO_PERMISSION, SWITCHED_OFF, SEARCHING, OK }
 
 /** A point chosen on the map, with what's known about it. */
-class Picked(val place: Place, val exact: Boolean, /** A bare spot on the map, nothing known there. */ val bare: Boolean = false)
+class Picked(val place: Place, val exact: Boolean, /** A bare spot on the map, nothing known there. */ val bare: Boolean = false, val note: String? = null, /** We only know roughly where: a tap on the map sets it. */ val fix: Boolean = false)
 
 /** A loaded pack plus its graph and the guidance for each route. */
 class LoadedPack(val file: File, val pack: RoutePack) {
@@ -240,6 +240,82 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** A link is being read. */
+    var reading by mutableStateOf(false)
+        private set
+
+    /** "It's here": moves the picked place to this spot and remembers it. */
+    fun placeHere(at: LatLon) {
+        val p = picked?.place ?: return
+        if (!Delhi.contains(at)) { error = "That's outside Delhi. This app only knows Delhi's roads."; return }
+        val moved = p.copy(lat = at.lat, lon = at.lon, label = if (p.label == "Added by you") p.label else "Set by you")
+        myPlaces = listOf(moved) + myPlaces.filterNot { it.name == p.name && Geo.dist(it.latLon, p.latLon) < 5 }
+        saved.setMine(myPlaces)
+        picked = Picked(moved, true)
+    }
+
+    fun movePin() { picked = picked?.let { Picked(it.place, it.exact, note = it.note, fix = true) } }
+
+    /** Something shared from Google Maps, WhatsApp or pasted: a link, a plus code, coordinates. */
+    fun openShared(text: String) {
+        // A plus code or coordinates pasted while we're asking where a shared place is: that's the answer.
+        val unsure = picked?.takeIf { it.fix }
+        if (unsure != null) {
+            val near = unsure.place.latLon
+            val point = if (text.startsWith("http")) null else MapLinks.read(text, near) { null }?.point
+            if (point != null) { placeHere(point); return }
+        }
+        if (navigator != null) { speaker.say("Finish this ride first, then share the place again.", false); return }
+        plan()
+        if (!MapLinks.looksLikeOne(text)) {
+            // Plain words: search for them.
+            openSearch = true
+            pendingQuery = text.lines().first().take(80)
+            return
+        }
+        pickJob?.cancel()
+        reading = true
+        pickJob = viewModelScope.launch {
+            try {
+                // Right after a cold start the place list may still be opening.
+                var waited = 0
+                while (places == null && waited < 3000) { delay(100); waited += 100 }
+                val near = here?.takeIf { inDelhi }?.latLon ?: LatLon(28.6315, 77.2167)
+                val found = withContext(Dispatchers.IO) {
+                    val link = MapLinks.read(text, near) { runCatching { http.redirect(it) }.getOrNull() } ?: return@withContext null
+                    val l = LinkLocator.locate(link, places) { q -> geocoder.search(q) }
+                    // A bare point: say what's there.
+                    if (l != null && link.name == null) runCatching { geocoder.reverse(l.place.lat, l.place.lon) }.getOrNull()
+                        ?.let { return@withContext Located(it.copy(label = "From your map link"), l.trust) }
+                    l
+                }
+                if (found == null) {
+                    error = "Couldn't read that link. It needs internet once; or paste the place's plus code or coordinates into search."
+                } else if (!Delhi.contains(found.place.latLon)) {
+                    error = "“${found.place.name}” is outside Delhi, where this map ends."
+                } else {
+                    val p = found.place
+                    val known = places?.let { db -> var k = false; db.inBox(p.lat - 2e-5, p.lon - 2e-5, p.lat + 2e-5, p.lon + 2e-5, 9) { if (db.name(it) == p.name) k = true }; k } ?: false
+                    // Yours from now on, findable offline.
+                    if (!known && found.trust != Trust.ROUGH && p.name != "Shared place" && !isMine(p)) {
+                        myPlaces = listOf(p) + myPlaces
+                        saved.setMine(myPlaces)
+                    }
+                    picked = Picked(p, found.trust == Trust.EXACT, fix = found.trust == Trust.ROUGH, note = when (found.trust) {
+                        Trust.EXACT -> null
+                        Trust.LIKELY -> "From the link. Looks right for the address, but check the pin."
+                        Trust.ROUGH -> "Google's link doesn't give the exact spot. This is about where the address is: tap the right place on the map, or paste its plus code."
+                    })
+                }
+            } finally {
+                reading = false
+            }
+        }
+    }
+
+    /** Words to search for as soon as the search panel opens. */
+    var pendingQuery by mutableStateOf<String?>(null)
+
     var nearby by mutableStateOf<List<Pair<Poi, Double>>?>(null)
     var nearbyBusy by mutableStateOf(false)
         private set
@@ -341,7 +417,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         suggestJob?.cancel()
         searchedOnline = false
         error = null
-        if (query.isBlank()) { results = emptyList(); return }
+        if (query.isBlank() || MapLinks.looksLikeOne(query)) { results = emptyList(); return }
         suggestJob = viewModelScope.launch {
             delay(40)
             val r = withContext(Dispatchers.Default) { offline(query, 16, true) }
@@ -355,6 +431,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Everything on the phone plus the two online search services, best first. */
     fun search(query: String) {
         if (query.isBlank()) return
+        if (MapLinks.looksLikeOne(query)) { openShared(query); return }
         suggestJob?.cancel()
         searching = true
         error = null

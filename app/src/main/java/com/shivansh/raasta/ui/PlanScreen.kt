@@ -66,6 +66,7 @@ import com.composables.icons.lucide.LocateFixed
 import com.composables.icons.lucide.LocateOff
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPinned
+import com.composables.icons.lucide.Map
 import com.composables.icons.lucide.MapPinPlus
 import com.composables.icons.lucide.X
 import com.shivansh.raasta.AppModel
@@ -115,7 +116,11 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
     val scope = rememberCoroutineScope()
     val now = rememberNow()
     var searchFor by remember { mutableStateOf(if (vm.openSearch) SearchFor.TO else null) }
-    LaunchedEffect(Unit) { vm.openSearch = false }
+    LaunchedEffect(vm.pendingQuery) { if (vm.openSearch) { searchFor = SearchFor.TO; vm.openSearch = false } }
+    LaunchedEffect(vm.reading) { if (vm.reading) searchFor = null }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(searchFor == null) { if (searchFor == null) { focusManager.clearFocus(force = true); keyboard?.hide() } }
     val px = density.density
     val state = remember {
         val h = vm.here
@@ -175,7 +180,8 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
         val sz = state.cam.size
         // Only move if it's hidden or near an edge.
         if (c.x < 40 * px || c.x > sz.width - 60 * px || c.y < topH + 30 * px || c.y > sz.height - bottomH - 60 * px)
-            state.show(World.x(p.lon), World.y(p.lat), max(state.cam.scale, 0.12f * px), topH.toFloat(), bottomH.toFloat())
+            state.show(World.x(p.lon), World.y(p.lat), max(state.cam.scale, (if (vm.picked?.fix == true) 0.5f else 0.12f) * px), topH.toFloat(), bottomH.toFloat())
+        else if (vm.picked?.fix == true) state.show(World.x(p.lon), World.y(p.lat), max(state.cam.scale, 0.5f * px), topH.toFloat(), bottomH.toFloat())
     }
 
     val focus = remember(vm.nearby) { vm.nearby.orEmpty().map { MapPoi(it.first) } }
@@ -203,13 +209,14 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                 vm.error = null
                 val poi = hit?.poi; val st = hit?.station
                 when {
+                    vm.picked?.fix == true -> state.cam.toWorld(p).let { w -> vm.placeHere(World.latLon(w.x, w.y)) }
                     st != null -> vm.pick(Place(st.name, "", st.lat, st.lon, PlaceKind.METRO))
                     poi != null -> vm.pick(vm.known(poi))
                     vm.picked != null -> vm.picked = null
                     else -> state.cam.toWorld(p).let { w -> vm.pickPoint(World.latLon(w.x, w.y)) }
                 }
             },
-            onLongPress = { p -> state.cam.toWorld(p).let { w -> vm.pickPoint(World.latLon(w.x, w.y)) } },
+            onLongPress = { p -> state.cam.toWorld(p).let { w -> World.latLon(w.x, w.y).let { if (vm.picked?.fix == true) vm.placeHere(it) else vm.pickPoint(it) } } },
             onUserMove = { touched = true; following = false },
         )
 
@@ -218,6 +225,7 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
         // Top: from / to
         Column(Modifier.align(Alignment.TopCenter).onSizeChanged { topH = it.height }.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
             TripBox(vm, onBack = { vm.screen = Screen.Home }, onFrom = { searchFor = SearchFor.FROM }, onTo = { searchFor = SearchFor.TO })
+            if (vm.picked?.fix == true) return@Column
             Row(Modifier.fillMaxWidth().padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in CHIPS) {
                     val sel = chip == c.label && (vm.nearby != null || vm.nearbyBusy)
@@ -264,6 +272,7 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                     .panel(RoundedCornerShape(26.dp)).blockMap().animateContentSize(spring(dampingRatio = 0.86f, stiffness = 500f)),
             ) {
                 val mode = when {
+                    vm.reading -> 4
                     vm.picked != null -> 0
                     vm.nearby != null || vm.nearbyBusy -> 1
                     vm.toPlace != null -> 2
@@ -272,7 +281,14 @@ fun PlanScreen(vm: AppModel, requestLocation: (() -> Unit) -> Unit) {
                 AnimatedContent(mode, transitionSpec = { fadeIn(tween(200, 60)) togetherWith fadeOut(tween(90)) }, label = "card") { m ->
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
                         when (m) {
-                            0 -> PickedCard(vm, here)
+                            4 -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = C.blue)
+                                Column(Modifier.padding(start = 16.dp)) {
+                                    Text("Reading the shared place…", style = T.headline)
+                                    Text("Checking where it really is", style = T.footnote)
+                                }
+                            }
+                            0 -> if (vm.picked?.fix == true) FixCard(vm) { searchFor = SearchFor.TO } else PickedCard(vm, here)
                             1 -> NearbyCard(vm, chip.orEmpty()) { chip = null; vm.closeNearby() }
                             2 -> TripCardPlan(vm, start, here, now)
                             else -> HereCard(vm, here, now, requestLocation)
@@ -464,6 +480,11 @@ private fun PickedCard(vm: AppModel, here: Here?) {
             Icon(Lucide.X, "Close", tint = C.secondary, modifier = Modifier.size(16.dp))
         }
     }
+    pick.note?.let { Text(it, style = T.footnote.copy(color = C.label), modifier = Modifier.padding(top = 10.dp)) }
+    if (pick.note == null && ("unverified" in p.label || "rough location" in p.label)) Text(
+        if ("rough" in p.label) "We only know the area. Check it on Google Maps and share it here for the exact spot." else "One source only, not confirmed. Check the pin before you ride.",
+        style = T.footnote.copy(color = C.label), modifier = Modifier.padding(top = 10.dp),
+    )
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         LineCapsule("Start here", Modifier.weight(1f), icon = Lucide.Bike, height = 50.dp) { vm.setFrom(p) }
@@ -473,15 +494,46 @@ private fun PickedCard(vm: AppModel, here: Here?) {
         Icon(Lucide.MapPinPlus, null, tint = C.secondary, modifier = Modifier.size(17.dp))
         Text("  Shop or place missing here? Add it", style = T.footnote.copy(color = C.label))
     }
-    if (vm.isMine(p)) Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.Center) {
+    val mine = vm.isMine(p)
+    if (!pick.bare && (pick.note != null || mine || "unverified" in p.label || "rough location" in p.label)) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center) {
         val ctx = LocalContext.current
-        Text("Share with everyone", style = T.footnote.copy(color = C.label), modifier = Modifier.pressable({
+        Text("Move pin", style = T.footnote.copy(color = C.label), modifier = Modifier.pressable({ vm.movePin() }).padding(12.dp))
+        // Only places people add from their own knowledge go into the open data, never ones that came from Google Maps.
+        if (mine && p.label == "Added by you") Text("Share with everyone", style = T.footnote.copy(color = C.label), modifier = Modifier.pressable({
             val body = "Name: ${p.name}\nType: ${p.kind.label}\nLocation: %.6f, %.6f\n\nAdded in the app; please include it in the next data update.".format(java.util.Locale.ROOT, p.lat, p.lon)
             val u = Uri.parse("https://github.com/Shivanshxsharma/vays-maps/issues/new").buildUpon()
                 .appendQueryParameter("title", "Missing place: ${p.name}").appendQueryParameter("body", body).build()
             runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, u)) }
         }).padding(12.dp))
-        Text("Remove", style = T.footnote.copy(color = C.red), modifier = Modifier.pressable({ vm.removePlace(p) }).padding(12.dp))
+        if (mine) Text("Remove", style = T.footnote.copy(color = C.red), modifier = Modifier.pressable({ vm.removePlace(p) }).padding(12.dp))
+    }
+}
+
+/** We know what and roughly where, not exactly where. Nobody should ride to a guess: one tap settles it. */
+@Composable
+private fun FixCard(vm: AppModel, onPaste: () -> Unit) {
+    val pick = vm.picked ?: return
+    val p = pick.place
+    val ctx = LocalContext.current
+    Row(verticalAlignment = Alignment.Top) {
+        KeyIcon(Lucide.MapPinPlus, tint = C.blue)
+        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+            Text("Tap where ${p.name} is", style = T.title3, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (p.detail.isNotBlank()) Text(p.detail, style = T.footnote, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Box(Modifier.size(34.dp).clip(CircleShape).background(C.elevated).pressable({ vm.picked = null }), contentAlignment = Alignment.Center) {
+            Icon(Lucide.X, "Close", tint = C.secondary, modifier = Modifier.size(16.dp))
+        }
+    }
+    Text(pick.note ?: "Zoom in and tap the right spot. It's remembered on your phone.", style = T.footnote.copy(color = C.label), modifier = Modifier.padding(top = 10.dp))
+    Spacer(Modifier.height(14.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LineCapsule("Paste plus code", Modifier.weight(1.2f), height = 46.dp) { onPaste() }
+        LineCapsule("See on Google", Modifier.weight(1f), height = 46.dp) {
+            val q = Uri.encode(p.name + " " + p.detail)
+            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q")).setPackage("com.google.android.apps.maps")) }
+                .onFailure { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$q"))) } }
+        }
     }
 }
 
@@ -568,6 +620,16 @@ private fun AddPlace(onDismiss: () -> Unit, onSave: (String, PlaceKind) -> Unit)
 @Composable
 private fun SearchPanel(vm: AppModel, what: SearchFor, near: LatLon?, requestLocation: (() -> Unit) -> Unit, change: (SearchFor) -> Unit, close: () -> Unit) {
     var query by remember(what) { mutableStateOf("") }
+    val ctx = LocalContext.current
+    LaunchedEffect(vm.pendingQuery) { vm.pendingQuery?.let { query = it; vm.suggest(it); vm.pendingQuery = null } }
+    fun google() {
+        val at = near ?: LatLon(28.6315, 77.2167)
+        val q = query.trim().let { if (it.contains("delhi", true)) it else "$it Delhi" }
+        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:%.5f,%.5f?q=".format(java.util.Locale.ROOT, at.lat, at.lon) + Uri.encode(q))).setPackage("com.google.android.apps.maps")
+        runCatching { ctx.startActivity(geo) }.onFailure {
+            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=" + Uri.encode(q)))) }
+        }
+    }
     val focus = remember { FocusRequester() }
     LaunchedEffect(what) { delay(80); runCatching { focus.requestFocus() } }
     fun choose(p: Place) {
@@ -589,7 +651,7 @@ private fun SearchPanel(vm: AppModel, what: SearchFor, near: LatLon?, requestLoc
                     style = T.body.copy(color = C.tertiary), maxLines = 1,
                 )
                 BasicTextField(
-                    value = query, onValueChange = { query = it; vm.suggest(it) }, singleLine = true, textStyle = T.body, cursorBrush = SolidColor(C.blue),
+                    value = query, onValueChange = { query = it; if (it.length > 8 && com.shivansh.raasta.core.MapLinks.looksLikeOne(it) && it.startsWith("http")) { vm.openShared(it); close() } else vm.suggest(it) }, singleLine = true, textStyle = T.body, cursorBrush = SolidColor(C.blue),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { vm.search(query) }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
@@ -614,6 +676,7 @@ private fun SearchPanel(vm: AppModel, what: SearchFor, near: LatLon?, requestLoc
                     }
                 }
                 item { Row2(Lucide.MapPinned, "Choose on the map", "Tap any place, or hold anywhere", null) { close() } }
+                item { Row2(Lucide.Map, "From Google Maps", "There: Share, then Vays Maps. Or paste a link or plus code here", null) { query = ""; google() } }
                 if (what == SearchFor.FROM || what == SearchFor.TO) {
                     item { SavedRow(Lucide.House, "Home", vm.home, near, { choose(it) }) { change(SearchFor.HOME) } }
                     item { SavedRow(Lucide.Briefcase, "Work", vm.work, near, { choose(it) }) { change(SearchFor.WORK) } }
@@ -628,10 +691,24 @@ private fun SearchPanel(vm: AppModel, what: SearchFor, near: LatLon?, requestLoc
                     val sub = listOf(p.what, vm.whereabouts(p)).filter { it.isNotBlank() && !it.equals(p.name, true) }.joinToString(" · ")
                     Row2(iconFor(p.kind), p.name, sub, dist(near, p), kindColor(p.kind)) { choose(p) }
                 }
-                if (!vm.searchedOnline && !vm.searching) item {
-                    Row2(Lucide.Globe, if (vm.results.isEmpty()) "Look online for “${query.trim()}”" else "Not here? Look online too", "Exact addresses and newer places", null) { vm.search(query) }
+                if (com.shivansh.raasta.core.MapLinks.looksLikeOne(query)) item {
+                    Row2(Lucide.MapPinned, "Go to this spot", query.trim(), null, C.blue) { vm.openShared(query); close() }
                 }
             }
+        }
+        // Always in reach, however long the list is.
+        if (query.isNotBlank() && !com.shivansh.raasta.core.MapLinks.looksLikeOne(query)) Column(Modifier.navigationBarsPadding().padding(bottom = 10.dp, top = 8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.weight(1.35f).height(46.dp).clip(CircleShape).background(C.elevated).pressable({ google() }), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(Lucide.Map, null, tint = C.label, modifier = Modifier.size(17.dp))
+                    Text("  Find on Google Maps", style = T.footnote.copy(color = C.label, fontWeight = FontWeight.Medium))
+                }
+                if (!vm.searchedOnline) Row(Modifier.weight(1f).height(46.dp).clip(CircleShape).background(C.elevated).pressable({ vm.search(query) }), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(Lucide.Globe, null, tint = C.label, modifier = Modifier.size(17.dp))
+                    Text("  Look online", style = T.footnote.copy(color = C.label, fontWeight = FontWeight.Medium))
+                }
+            }
+            Text("On Google Maps: open the place, tap Share, choose Vays Maps.", style = T.caption, modifier = Modifier.fillMaxWidth().padding(top = 7.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

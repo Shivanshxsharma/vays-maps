@@ -1,6 +1,7 @@
 package com.shivansh.raasta
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -37,6 +38,22 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         setContent { RaastaApp(vm, ::withLocation) }
+        // Not again when the screen is rebuilt: the share was handled the first time.
+        if (savedInstanceState == null) handle(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    private fun handle(i: Intent?) {
+        val text = when (i?.action) {
+            Intent.ACTION_SEND -> listOfNotNull(i.getStringExtra(Intent.EXTRA_SUBJECT), i.getStringExtra(Intent.EXTRA_TEXT)).distinct().joinToString("\n")
+            Intent.ACTION_VIEW -> i.dataString
+            else -> null
+        } ?: return
+        if (text.isNotBlank()) vm.openShared(text.take(2000))
     }
 
     override fun onStart() { super.onStart(); vm.startLive() }

@@ -30,6 +30,15 @@ fun main(args: Array<String>) {
         "search" -> Geocoder(Http()).search(args.drop(1).joinToString(" ")).forEach { println("%-16s %s  (%s)".format(it.kind.label, it.name, it.detail)) }
         "places" -> TileCutter.run(File(args[1]), File("data"), overture = File(args[2]))
         "find" -> find(args)
+        "link" -> {
+            val db = java.io.RandomAccessFile("app/src/main/assets/places.db", "r").channel.use { PlaceDb(it.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, it.size())) }
+            val http = Http()
+            for (a in args.drop(1)) {
+                val l = MapLinks.read(a, LatLon(28.6315, 77.2167)) { http.redirect(it) }
+                val r = l?.let { LinkLocator.locate(it, db) { emptyList() } }
+                println("${l?.name} | id ${l?.hint?.let { "%.5f,%.5f".format(it.lat, it.lon) }} -> ${r?.place?.let { "%.5f,%.5f".format(it.lat, it.lon) }} ${r?.trust} | ${l?.address}")
+            }
+        }
         "tiles" -> TileCutter.run(File(args[1]), File(args[2]))
         else -> println("usage: build|show|render|sim … (see Cli.kt)")
     }

@@ -22,6 +22,20 @@ class Http(private val userAgent: String = "VaysMaps/0.1 (offline Delhi navigati
         return request(url, body, timeoutMs).toString(Charsets.UTF_8)
     }
 
+    /** Where a short link leads, without opening it. */
+    fun redirect(url: String): String? {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.instanceFollowRedirects = false
+            c.connectTimeout = 10_000
+            c.readTimeout = 10_000
+            c.setRequestProperty("User-Agent", userAgent)
+            return if (c.responseCode in 300..399) c.getHeaderField("Location") else null
+        } finally {
+            c.disconnect()
+        }
+    }
+
     private fun request(url: String, body: String?, timeoutMs: Int): ByteArray {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
