@@ -1,4 +1,13 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The mark as a status bar icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M12,2 L20,21 L12,17 L4,21 Z" />
+    <group android:translateX="-1.75" android:translateY="-0.6" android:scaleX="0.262" android:scaleY="0.262">
+        <path android:fillColor="#FFFFFF" android:fillAlpha="0.6" android:pathData="M20.00,22.00 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M24.50,32.66 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M28.99,43.32 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M33.49,53.98 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="10" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M41.5,63 L44.5,70.5 Q48,78.5 51.5,70.5 L70,34" />
+        <path android:fillColor="#FFFFFF" android:strokeColor="#FFFFFF" android:strokeWidth="3" android:strokeLineJoin="round"
+            android:pathData="M79,16 L80.8,37 L61.1,27.2 Z" />
+    </group>
 </vector>

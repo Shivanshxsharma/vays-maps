@@ -1,18 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Vays mark: a V made of two roads splitting. Skipped road = outline, taken road = solid with an arrow.
-     Drawn inside the 66dp safe zone of the 108dp adaptive icon. -->
+<!-- The Vays mark: a V of two roads. The one you skip is dotted, the one you take is solid with an arrow. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- skipped road: hollow -->
-    <path android:strokeColor="#8CFFFFFF" android:strokeWidth="7.3" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M54,72.5 C54,61.9 43.4,55.3 41.5,38.2" />
-    <path android:strokeColor="#143008" android:strokeWidth="4.5" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M54,72.5 C54,61.9 43.4,55.3 41.5,38.2" />
-    <!-- taken road: glow + solid -->
-    <path android:strokeColor="#66B0E454" android:strokeWidth="12.6" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M54,72.5 C54,61.9 64.6,55.3 66.5,40.8" />
-    <path android:strokeColor="#B0E454" android:strokeWidth="7.3" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M54,72.5 C54,61.9 64.6,55.3 66.5,40.8" />
-    <path android:fillColor="#FFFFFF" android:pathData="M67.5,32.9 L74.1,42.8 L61.3,41.5 Z" />
+    <group android:translateX="27.36" android:translateY="28.8" android:scaleX="0.5184" android:scaleY="0.5184">
+        <path android:fillColor="#B9E769" android:fillAlpha="0.6" android:pathData="M20.00,22.00 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M24.50,32.66 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M28.99,43.32 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M33.49,53.98 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+        <path android:strokeColor="#B9E769" android:strokeWidth="10" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M41.5,63 L44.5,70.5 Q48,78.5 51.5,70.5 L70,34" />
+        <path android:fillColor="#B9E769" android:strokeColor="#B9E769" android:strokeWidth="3" android:strokeLineJoin="round"
+            android:pathData="M79,16 L80.8,37 L61.1,27.2 Z" />
+    </group>
 </vector>

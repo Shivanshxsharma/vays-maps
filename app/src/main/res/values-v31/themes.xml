@@ -7,6 +7,6 @@
         <!-- Launch screen: the Vays mark on black. -->
         <item name="android:windowSplashScreenBackground">#0D0D0D</item>
         <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">#0D0D0D</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#14392A</item>
     </style>
 </resources>

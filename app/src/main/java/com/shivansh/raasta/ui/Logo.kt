@@ -16,8 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
@@ -30,10 +28,13 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+private val MarkTile = Color(0xFF14392A)
+private val MarkLime = Color(0xFFB9E769)
+
 /**
- * The Vays mark: a "V" made of two roads splitting. The road you skip is an outline, the road you take is
- * solid lavender with an arrow, which is exactly what the voice does at every split.
- * On an ink squircle. [animate] draws the roads in, once.
+ * The Vays mark: a "V" made of two roads splitting. The road you skip is dotted, the road you take is solid with an
+ * arrow, which is exactly what the voice does at every split. On a deep green squircle. [animate] plays it once:
+ * the dots come down, the road goes up, the arrow lands.
  */
 @Composable
 fun VaysMark(size: Dp = 44.dp, animate: Boolean = false, tile: Boolean = true, modifier: Modifier = Modifier) {
@@ -41,46 +42,37 @@ fun VaysMark(size: Dp = 44.dp, animate: Boolean = false, tile: Boolean = true, m
     LaunchedEffect(animate) { if (animate) draw.animateTo(1f, tween(1100, delayMillis = 150, easing = FastOutSlowInEasing)) }
     Canvas(modifier.size(size)) {
         val u = this.size.minDimension / 100f
-        if (tile) {
-            drawRoundRect(
-                Brush.linearGradient(listOf(Ink.i500, Ink.i700, Ink.i900), start = Offset(0f, 0f), end = Offset(this.size.width, this.size.height)),
-                cornerRadius = CornerRadius(26f * u),
-            )
-            // Soft top light, like a glass tile.
-            drawRoundRect(
-                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f), Color.Transparent), startY = 0f, endY = 50f * u),
-                cornerRadius = CornerRadius(26f * u),
-            )
-            drawRoundRect(Color.White.copy(alpha = 0.10f), cornerRadius = CornerRadius(26f * u), style = Stroke(1.2f * u))
-        }
-        fun road(x0: Float, y0: Float, c1x: Float, c1y: Float, c2x: Float, c2y: Float, x1: Float, y1: Float) =
-            Path().apply { moveTo(x0 * u, y0 * u); cubicTo(c1x * u, c1y * u, c2x * u, c2y * u, x1 * u, y1 * u) }
-        val skip = road(50f, 78f, 50f, 62f, 34f, 52f, 31f, 26f)
-        val take = road(50f, 78f, 50f, 62f, 66f, 52f, 69f, 30f)
-        val w = 11f * u
-        fun part(p: Path, t: Float): Path {
-            if (t >= 1f) return p
-            val m = PathMeasure().apply { setPath(p, false) }
-            return Path().also { m.getSegment(0f, m.length * t, it, true) }
-        }
+        if (tile) drawRoundRect(MarkTile, cornerRadius = CornerRadius(23f * u))
+        // The artwork sits in the tile at 72%, as in docs/art/logo.svg.
+        fun x(v: Float) = (13f + 0.72f * v) * u
+        fun y(v: Float) = (15f + 0.72f * v) * u
+        val k = 0.72f * u
         val t = draw.value
-        // Skipped road: hollow outline.
-        drawPath(part(skip, t), Color.White.copy(alpha = 0.55f), style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(part(skip, t), if (tile) Ink.i700 else C.bg, style = Stroke(w - 4.2f * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        // Taken road: solid, with a soft glow.
-        drawPath(part(take, t), Ink.i300.copy(alpha = 0.40f), style = Stroke(w + 8f * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(part(take, t), Brush.verticalGradient(listOf(Ink.i100, Ink.i300), startY = 26f * u, endY = 80f * u),
-            style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        if (t > 0.85f) {
-            val a = ((t - 0.85f) / 0.15f).coerceIn(0f, 1f)
-            val tip = Offset(70.5f * u, 18f * u)
-            val head = Path().apply {
-                moveTo(tip.x, tip.y)
-                lineTo(tip.x + 10f * u, tip.y + 15f * u)
-                lineTo(tip.x - 9.5f * u, tip.y + 13f * u)
-                close()
+        fun phase(from: Float, to: Float) = ((t - from) / (to - from)).coerceIn(0f, 1f)
+        for (i in 0..3) {
+            val a = phase(0.09f * i, 0.09f * i + 0.16f)
+            val d = i * 11.57f / 34.731f
+            if (a > 0f) drawCircle(MarkLime.copy(alpha = 0.6f * a), 4f * k * (0.5f + 0.5f * a), Offset(x(24f + 13.5f * d), y(22f + 32f * d)))
+        }
+        val road = Path().apply {
+            moveTo(x(41.5f), y(63f))
+            lineTo(x(44.5f), y(70.5f))
+            quadraticTo(x(48f), y(78.5f), x(51.5f), y(70.5f))
+            lineTo(x(70f), y(34f))
+        }
+        val r = phase(0.42f, 0.88f)
+        if (r > 0f) {
+            val shown = if (r >= 1f) road else {
+                val m = PathMeasure().apply { setPath(road, false) }
+                Path().also { m.getSegment(0f, m.length * r, it, true) }
             }
-            drawPath(head, Color.White.copy(alpha = a))
+            drawPath(shown, MarkLime, style = Stroke(10f * k, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        val h = phase(0.84f, 1f)
+        if (h > 0f) {
+            val head = Path().apply { moveTo(x(79f), y(16f)); lineTo(x(80.8f), y(37f)); lineTo(x(61.1f), y(27.2f)); close() }
+            drawPath(head, MarkLime.copy(alpha = h))
+            drawPath(head, MarkLime.copy(alpha = h), style = Stroke(3f * k, join = StrokeJoin.Round))
         }
     }
 }
